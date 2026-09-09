@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dtm_voxelization"
+version = "0.1.0"
+description = "Voxelize a real DTM (digital terrain model) into a carved PorePy Cartesian grid."
+readme = "README.md"
+license = { text = "GPL-3.0" }
+authors = [{ name = "Alessio Fumagalli" }]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "porepy",
+]
+
+[project.urls]
+Repository = "https://github.com/compgeo-mox/dtm_voxelization"
+
+[project.scripts]
+dtm-voxelization = "dtm_voxelization.build_cartgrid_carved:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
