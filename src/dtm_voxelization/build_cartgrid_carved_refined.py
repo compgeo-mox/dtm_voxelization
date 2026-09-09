@@ -30,15 +30,21 @@ own output), not a PorePy grid, so carving and export are done directly
 here instead of via pp.CartGrid/pp.partition.extract_subgrid.
 """
 
+import sys
 from pathlib import Path
 
 import numpy as np
 import meshio
 
-from .dtm_io import load_dtm_analysis_grid, load_dtm_interpolator
-from .build_cartgrid_carved import TARGET_TOTAL_CELLS, estimate_kept_fraction
-from . import general_rebuild as GR
-from .geometry_checks import check_conformity_3d
+# lets this file also run directly (`python build_cartgrid_carved_refined.py`),
+# not just as part of the installed dtm_voxelization package
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from dtm_voxelization.dtm_io import load_dtm_analysis_grid, load_dtm_interpolator
+from dtm_voxelization.build_cartgrid_carved import TARGET_TOTAL_CELLS, estimate_kept_fraction
+from dtm_voxelization import general_rebuild as GR
+from dtm_voxelization.geometry_checks import check_conformity_3d
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 XYZ_PATH = REPO_ROOT / "data" / "xyz" / "merged.xyz"
