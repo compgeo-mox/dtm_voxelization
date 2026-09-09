@@ -14,6 +14,7 @@ dependencies = [
     "numpy",
     "scipy",
     "porepy",
+    "meshio",
 ]
 
 [project.urls]
@@ -21,6 +22,10 @@ Repository = "https://github.com/compgeo-mox/dtm_voxelization"
 
 [project.scripts]
 dtm-voxelization = "dtm_voxelization.build_cartgrid_carved:main"
+dtm-voxelization-refined = "dtm_voxelization.build_cartgrid_carved_refined:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dtm_voxelization = ["template_data.npz"]

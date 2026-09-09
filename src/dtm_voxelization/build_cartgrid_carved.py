@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 XYZ_PATH = REPO_ROOT / "data" / "xyz" / "merged.xyz"
 OUTPUT_DIR = REPO_ROOT / "output"
 
-TARGET_TOTAL_CELLS = 3_000_000
+TARGET_TOTAL_CELLS = 1_000_000
 FRACTION_SAMPLE_N = (
     400  # resolution of the coarse pre-sample used only to size NX/NY/NZ
 )
