@@ -34,6 +34,27 @@ from .geometry_checks import check_conformity_3d, hex_volumes_signed
 NBRS = {"E": (1, 0), "W": (-1, 0), "N": (0, 1), "S": (0, -1)}
 
 
+def _dedup_points(raw, cell_size):
+    """Vectorized replacement for a per-point Python dict/round() loop:
+    given `raw` (any sequence of (8,3) hex corner arrays), returns
+    (points, hexes) with points deduplicated by position rounded to 5dp
+    RELATIVE to cell_size (see build_mesh's own docstring, at its
+    original point-dedup loop, for why the rounding must scale with
+    cell_size rather than use a fixed absolute tolerance). Keeps each
+    unique point's first-seen (UNROUNDED) coordinate, exactly like the
+    loop it replaces -- just without the millions of individual Python
+    dict-entry/tuple allocations that made it the dominant cost (both in
+    time and memory) once a mesh reaches real, multi-million-hex sizes."""
+    cx, cy, cz = T.cs3(cell_size)
+    raw_arr = np.asarray(raw, dtype=float)  # (n_hex, 8, 3)
+    flat = raw_arr.reshape(-1, 3)
+    key = np.round(flat / np.array([cx, cy, cz]), 5)
+    _, first_idx, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    points = flat[first_idx]
+    hexes = inverse.reshape(raw_arr.shape[0], 8)
+    return points, hexes
+
+
 def refine_region_further(points, hexes, tags, footprint, k_layers, NX, NY, NZ,
                            XMIN, YMIN, ZMIN, local_size=5, cell_size=1.0):
     """Multi-level refinement: push one lateral `footprint` (set of
@@ -153,10 +174,9 @@ def refine_region_further(points, hexes, tags, footprint, k_layers, NX, NY, NZ,
     # ONCE rather than linearly rescanning all hexes for each cell of the
     # bounding box checked below -- the dominant cost on a real, tens-of-
     # thousands-of-hexes mesh otherwise.
-    by_pos = {}
-    for hi2, h2 in enumerate(hexes):
-        key2 = tuple(round(v, 5) for v in points[h2].min(0) / (cx, cy, cz))
-        by_pos[key2] = hi2
+    mins = points[hexes].min(axis=1) / np.array([cx, cy, cz])  # (n_hex, 3), vectorized
+    keys2 = np.round(mins, 5)
+    by_pos = dict(zip(map(tuple, keys2.tolist()), range(len(hexes))))
 
     def lookup(i, j, k):
         x0 = XMIN + i * cx
@@ -220,7 +240,7 @@ def refine_region_further(points, hexes, tags, footprint, k_layers, NX, NY, NZ,
         local_footprint, NX=block_size[0], NY=block_size[1], NZ=block_size[2],
         XMIN=block_xmin, YMIN=block_ymin, ZMIN=block_zmin,
         k_layers=local_k_layers, cell_size=cell_size)
-    new_blocks = [loc_pts[h] for h in loc_hexes]
+    new_blocks = loc_pts[loc_hexes]  # (n_new, 8, 3)
     new_tags = [f"{out_prefix}{t}" if t.split(":")[0] == "urz" else t for t in loc_tags]
 
     # splice: drop every current parent hex whose centroid falls inside
@@ -229,33 +249,20 @@ def refine_region_further(points, hexes, tags, footprint, k_layers, NX, NY, NZ,
     bxhi = bxlo + block_size[0] * cx
     byhi = bylo + block_size[1] * cy
     bzhi = bzlo + block_size[2] * cz
-    keep_mask = []
-    for h in hexes:
-        c = points[h].mean(0)
-        inside = (bxlo < c[0] < bxhi) and (bylo < c[1] < byhi) and (bzlo < c[2] < bzhi)
-        keep_mask.append(not inside)
-    keep_mask = np.array(keep_mask)
-    kept_blocks = [points[h] for h in hexes[keep_mask]]
+    centroids = points[hexes].mean(axis=1)  # (n_hex, 3), vectorized
+    inside = (
+        (centroids[:, 0] > bxlo) & (centroids[:, 0] < bxhi)
+        & (centroids[:, 1] > bylo) & (centroids[:, 1] < byhi)
+        & (centroids[:, 2] > bzlo) & (centroids[:, 2] < bzhi)
+    )
+    keep_mask = ~inside
+    kept_blocks = points[hexes[keep_mask]]  # (n_kept, 8, 3)
     kept_tags = [t for i, t in enumerate(tags) if keep_mask[i]]
 
-    all_blocks = kept_blocks + new_blocks
+    all_blocks = np.concatenate([kept_blocks, new_blocks], axis=0)
     all_tags = kept_tags + new_tags
 
-    pts_list, pid = [], {}
-
-    def gid(p):
-        key = (round(float(p[0]) / cx, 5),
-               round(float(p[1]) / cy, 5),
-               round(float(p[2]) / cz, 5))
-        idx = pid.get(key)
-        if idx is None:
-            idx = len(pts_list)
-            pid[key] = idx
-            pts_list.append((float(p[0]), float(p[1]), float(p[2])))
-        return idx
-
-    hexes = np.array([[gid(p) for p in h] for h in all_blocks])
-    points = np.array(pts_list)
+    points, hexes = _dedup_points(all_blocks, cell_size)
     tags = all_tags
 
     vols = hex_volumes_signed(points, hexes)
@@ -540,13 +547,28 @@ def build_mesh(footprint, NX=8, NY=8, NZ=8, XMIN=-4.0, YMIN=-4.0, ZMIN=-4.0,
         for k in k_layers:
             handled_k[k].add((i, j))
 
-    for i in ni_range:
-        for j in nj_range:
-            for k in range(NZ):
-                if (i, j) in handled_k.get(k, ()):
-                    continue
-                x0, y0, z0 = XMIN + i * cx, YMIN + j * cy, ZMIN + k * cz
-                add(T.coarse_box(x0, y0, z0, cell_size=cell_size), f"coarse:({i},{j},{k})")
+    # vectorized: this loop covers the ENTIRE NX*NY*NZ domain (not just
+    # the footprint), so at real DTM-scale grids it can be many millions
+    # of plain cells -- computing all their corners in one batched numpy
+    # call instead of calling T.coarse_box + add() once per cell (as an
+    # earlier version did) is what makes that tractable.
+    fill_mask = np.ones((NX, NY, NZ), dtype=bool)
+    for k, ijset in handled_k.items():
+        if ijset and 0 <= k < NZ:
+            ii, jj = zip(*ijset)
+            fill_mask[np.array(ii), np.array(jj), k] = False
+    fi, fj, fk = np.nonzero(fill_mask)
+    if len(fi):
+        x0, y0, z0 = XMIN + fi * cx, YMIN + fj * cy, ZMIN + fk * cz
+        x1, y1, z1 = x0 + cx, y0 + cy, z0 + cz
+        blocks = np.stack([
+            np.stack([x0, y0, z0], axis=-1), np.stack([x1, y0, z0], axis=-1),
+            np.stack([x1, y1, z0], axis=-1), np.stack([x0, y1, z0], axis=-1),
+            np.stack([x0, y0, z1], axis=-1), np.stack([x1, y0, z1], axis=-1),
+            np.stack([x1, y1, z1], axis=-1), np.stack([x0, y1, z1], axis=-1),
+        ], axis=1)  # (n, 8, 3), same corner order as T.coarse_box
+        raw.extend(blocks)
+        tags.extend(f"coarse:({i},{j},{k})" for i, j, k in zip(fi.tolist(), fj.tolist(), fk.tolist()))
 
     # dedupe points -- rounded to 6dp RELATIVE to cell_size (i.e. round
     # p/cell_size, not p itself), not a fixed absolute 6dp. The ~1e-7
@@ -561,21 +583,7 @@ def build_mesh(footprint, NX=8, NY=8, NZ=8, XMIN=-4.0, YMIN=-4.0, ZMIN=-4.0,
     # 9dp-vs-6dp precision bug this project hit at cell_size=1). Dividing
     # by cell_size before rounding keeps the ABSOLUTE tolerance
     # proportional to cell_size, matching how the noise itself scales.
-    pts_list, pid = [], {}
-
-    def gid(p):
-        key = (round(float(p[0]) / cx, 5),
-               round(float(p[1]) / cy, 5),
-               round(float(p[2]) / cz, 5))
-        idx = pid.get(key)
-        if idx is None:
-            idx = len(pts_list)
-            pid[key] = idx
-            pts_list.append((float(p[0]), float(p[1]), float(p[2])))
-        return idx
-
-    hexes = np.array([[gid(p) for p in h] for h in raw])
-    points = np.array(pts_list)
+    points, hexes = _dedup_points(raw, cell_size)
 
     vols = hex_volumes_signed(points, hexes)
     bad = np.where(vols <= 0)[0]

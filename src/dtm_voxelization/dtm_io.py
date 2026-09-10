@@ -3,7 +3,9 @@ analysis grid (domain extent + elevation, for sizing the Cartesian grid)
 and a full-resolution scattered-point interpolator (for querying exact
 terrain elevation while carving)."""
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator, griddata
@@ -44,9 +46,15 @@ def load_dtm_analysis_grid(xyz_path, max_grid_points=300):
     print(f"  [griddata] {time.time() - t0:.2f}s")
 
     return dict(
-        X=X, Y=Y, Z=Z, x_unique=x_unique, y_unique=y_unique,
-        xmin=float(x_unique.min()), xmax=float(x_unique.max()),
-        ymin=float(y_unique.min()), ymax=float(y_unique.max()),
+        X=X,
+        Y=Y,
+        Z=Z,
+        x_unique=x_unique,
+        y_unique=y_unique,
+        xmin=float(x_unique.min()),
+        xmax=float(x_unique.max()),
+        ymin=float(y_unique.min()),
+        ymax=float(y_unique.max()),
     )
 
 
@@ -74,3 +82,25 @@ def load_dtm_interpolator(xyz_path):
         return z_out
 
     return interpolate
+
+
+def interpolate_in_parallel(
+    interpolator, query_xy, min_points=100_000, max_workers=None
+):
+    """Evaluate a DTM interpolator in independent chunks when worthwhile.
+
+    SciPy's interpolators release the GIL during their numerical work, while
+    the callable returned by ``load_dtm_interpolator`` is safe to share for
+    read-only queries. Small arrays stay on the simple single-call path so
+    thread setup never dominates the work.
+    """
+    query_xy = np.asarray(query_xy)
+    if len(query_xy) < min_points:
+        return interpolator(query_xy)
+
+    workers = max_workers or min(4, os.cpu_count() or 1)
+    workers = max(1, min(workers, len(query_xy)))
+    chunks = np.array_split(query_xy, workers)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(executor.map(interpolator, chunks))
+    return np.concatenate(results)

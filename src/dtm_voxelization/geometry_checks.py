@@ -10,7 +10,9 @@ the direct signature of a hanging node -- this catches defects that
 element-count or volume/area checks alone miss), and total area/volume
 matches the domain exactly.
 """
+
 from collections import defaultdict
+import time
 
 import numpy as np
 
@@ -32,12 +34,15 @@ def check_conformity(loops, xmin, xmax, ymin, ymax, tol=1e-9):
     and lying on the true outer boundary, and total area matching the
     domain exactly.
     """
+
     def key(p):
         return (round(p[0], 9), round(p[1], 9))
 
     non_quads = [loop for loop in loops if len({key(p) for p in loop}) != 4]
     if non_quads:
-        print(f"NON-QUAD elements: {len(non_quads)} (expected 4 distinct vertices each)")
+        print(
+            f"NON-QUAD elements: {len(non_quads)} (expected 4 distinct vertices each)"
+        )
         for loop in non_quads[:5]:
             print("  ", loop)
 
@@ -62,8 +67,10 @@ def check_conformity(loops, xmin, xmax, ymin, ymax, tol=1e-9):
     n_positive = sum(1 for a in signed_areas if a > 0)
     inconsistent_winding = n_negative > 0 and n_positive > 0
     if inconsistent_winding:
-        print(f"INCONSISTENT WINDING: {n_positive} CCW, {n_negative} CW quads "
-              f"(should be all one or the other)")
+        print(
+            f"INCONSISTENT WINDING: {n_positive} CCW, {n_negative} CW quads "
+            f"(should be all one or the other)"
+        )
 
     mult = np.bincount(list(edge_count.values()))
     boundary_edges = [e for e, c in edge_count.items() if c == 1]
@@ -71,8 +78,10 @@ def check_conformity(loops, xmin, xmax, ymin, ymax, tol=1e-9):
     for e in boundary_edges:
         pts = list(e)
         on_outer = all(
-            abs(p[0] - xmin) < tol or abs(p[0] - xmax) < tol
-            or abs(p[1] - ymin) < tol or abs(p[1] - ymax) < tol
+            abs(p[0] - xmin) < tol
+            or abs(p[0] - xmax) < tol
+            or abs(p[1] - ymin) < tol
+            or abs(p[1] - ymax) < tol
             for p in pts
         )
         if not on_outer:
@@ -81,8 +90,10 @@ def check_conformity(loops, xmin, xmax, ymin, ymax, tol=1e-9):
     expected_area = (xmax - xmin) * (ymax - ymin)
     print(f"quads: {len(loops)}")
     print(f"edge multiplicity dist: {mult}")
-    print(f"total area: {total_area:.6f}  expected: {expected_area:.6f}  "
-          f"diff: {total_area - expected_area:.2e}")
+    print(
+        f"total area: {total_area:.6f}  expected: {expected_area:.6f}  "
+        f"diff: {total_area - expected_area:.2e}"
+    )
     print(f"phantom (hanging-node) boundary edges: {phantom} / {len(boundary_edges)}")
     print(f"non-quad elements: {len(non_quads)}")
     print(f"winding: {n_positive} CCW / {n_negative} CW")
@@ -166,31 +177,65 @@ def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1
     domain, where floating-point accumulation error over millions of
     hexes can easily exceed 1e-6 in absolute terms while still being
     utterly negligible relative to the domain's actual volume.
+
+    Face identity/counting is done with a fully vectorized numpy
+    sort+np.unique (an earlier version used a Python dict keyed by
+    frozenset(point indices) per face -- correct, but its millions of
+    Python frozenset/dict-entry objects at real mesh sizes (multi-
+    million hexes) used tens of GB of RAM and got OOM-killed; plain
+    int arrays instead keep this to a small multiple of the raw face
+    data itself).
     """
     points = np.asarray(points)
     hexes = np.asarray(hexes)
+    t0 = time.perf_counter()
+    print(
+        f"[conformity] start: {len(hexes):,} hexes, {len(points):,} points; "
+        f"building {len(hexes) * 6:,} face records",
+        flush=True,
+    )
 
-    degenerate = [h for h in hexes if len(set(h.tolist())) != 8]
-    if degenerate:
-        print(f"DEGENERATE hexes: {len(degenerate)} (expected 8 distinct vertices each)")
+    sorted_hexes = np.sort(hexes, axis=1)
+    degenerate_mask = (np.diff(sorted_hexes, axis=1) == 0).any(axis=1)
+    n_degenerate = int(degenerate_mask.sum())
+    if n_degenerate:
+        print(f"DEGENERATE hexes: {n_degenerate} (expected 8 distinct vertices each)")
 
     vols = hex_volumes_signed(points, hexes)
     bad_vol = int((vols <= 0).sum())
+    print(
+        f"[conformity] volumes checked in {time.perf_counter() - t0:.1f}s; "
+        "sorting and deduplicating faces",
+        flush=True,
+    )
 
-    face_count = defaultdict(int)
-    for h in hexes:
-        for idx in _HEX_FACES:
-            face_count[frozenset(int(h[i]) for i in idx)] += 1
+    face_idx = np.asarray(_HEX_FACES)  # (6, 4)
+    faces = hexes[:, face_idx].reshape(-1, 4)  # (n_hex * 6, 4)
+    faces.sort(axis=1)
+    uniq_faces, counts = np.unique(faces, axis=0, return_counts=True)
+    print(
+        f"[conformity] face uniqueness finished in {time.perf_counter() - t0:.1f}s; "
+        f"{len(uniq_faces):,} unique faces",
+        flush=True,
+    )
 
-    mult = np.bincount(list(face_count.values())) if face_count else np.array([0])
-    boundary_faces = [f for f, c in face_count.items() if c == 1]
+    mult = np.bincount(counts)
+    boundary_faces = uniq_faces[counts == 1]
 
     on_boundary_box = (
-        (np.abs(points[:, 0] - xmin) < tol) | (np.abs(points[:, 0] - xmax) < tol)
-        | (np.abs(points[:, 1] - ymin) < tol) | (np.abs(points[:, 1] - ymax) < tol)
-        | (np.abs(points[:, 2] - zmin) < tol) | (np.abs(points[:, 2] - zmax) < tol)
+        (np.abs(points[:, 0] - xmin) < tol)
+        | (np.abs(points[:, 0] - xmax) < tol)
+        | (np.abs(points[:, 1] - ymin) < tol)
+        | (np.abs(points[:, 1] - ymax) < tol)
+        | (np.abs(points[:, 2] - zmin) < tol)
+        | (np.abs(points[:, 2] - zmax) < tol)
     )
-    phantom = sum(1 for f in boundary_faces if not all(on_boundary_box[i] for i in f))
+    phantom = int((~on_boundary_box[boundary_faces]).any(axis=1).sum())
+    print(
+        f"[conformity] boundary-face check finished in {time.perf_counter() - t0:.1f}s; "
+        f"{len(boundary_faces):,} boundary faces",
+        flush=True,
+    )
 
     expected_volume = (xmax - xmin) * (ymax - ymin) * (zmax - zmin)
     total_volume = float(vols.sum())
@@ -199,13 +244,15 @@ def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1
     print(f"hexes: {len(hexes)}")
     print(f"face multiplicity dist: {mult}")
     print(f"negative/zero volume hexes: {bad_vol}")
-    print(f"total volume: {total_volume:.4f}  expected: {expected_volume:.4f}  "
-          f"diff: {total_volume - expected_volume:.4e}")
+    print(
+        f"total volume: {total_volume:.4f}  expected: {expected_volume:.4f}  "
+        f"diff: {total_volume - expected_volume:.4e}"
+    )
     print(f"phantom (hanging-node) boundary faces: {phantom} / {len(boundary_faces)}")
-    print(f"degenerate hexes: {len(degenerate)}")
+    print(f"degenerate hexes: {n_degenerate}")
 
     return (
-        not degenerate
+        n_degenerate == 0
         and bad_vol == 0
         and phantom == 0
         and abs(total_volume - expected_volume) < volume_tol
