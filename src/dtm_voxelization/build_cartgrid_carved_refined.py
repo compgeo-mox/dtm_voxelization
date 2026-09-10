@@ -31,6 +31,7 @@ here instead of via pp.CartGrid/pp.partition.extract_subgrid.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -41,8 +42,15 @@ import meshio
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dtm_voxelization.dtm_io import load_dtm_analysis_grid, load_dtm_interpolator
-from dtm_voxelization.build_cartgrid_carved import TARGET_TOTAL_CELLS, estimate_kept_fraction
+from dtm_voxelization.dtm_io import (
+    interpolate_in_parallel,
+    load_dtm_analysis_grid,
+    load_dtm_interpolator,
+)
+from dtm_voxelization.build_cartgrid_carved import (
+    TARGET_TOTAL_CELLS,
+    estimate_kept_fraction,
+)
 from dtm_voxelization import general_rebuild as GR
 from dtm_voxelization.geometry_checks import check_conformity_3d
 
@@ -54,10 +62,14 @@ OUTPUT_DIR = REPO_ROOT / "output"
 # DTM slope map's layer-3 nested refinement, test_gridding/files/manual_regions.py)
 INNER_XMIN, INNER_XMAX = -260.0, -10.0
 INNER_YMIN, INNER_YMAX = 175.0, 425.0
-REGION_Z_PAD = 20.0  # extra clearance above/below the DTM surface within the inner region
+REGION_Z_PAD = (
+    20.0  # extra clearance above/below the DTM surface within the inner region
+)
 
 OUTER_SCALE = 1.5  # outer (level-1) region = inner region scaled by this in x, y, AND z, same center
-SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_total_cells
+SIZE_TOLERANCE = (
+    0.3  # accept the first cell_edge landing within +/-30% of target_total_cells
+)
 
 
 def footprint_from_region(xmin, ymin, hx, hy, nx, ny, rxmin, rxmax, rymin, rymax):
@@ -94,14 +106,53 @@ def scale_interval(lo, hi, scale):
     return c - h, c + h
 
 
-def build_double_refined_grid(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz,
-                               inner_bounds, outer_bounds, dtm_interp):
+def export_dtm_surface(dtm, output_path):
+    """Export the regular DTM analysis grid as an upward-facing STL surface."""
+    x_grid, y_grid, z_grid = dtm["X"], dtm["Y"], dtm["Z"]
+    nx, ny = z_grid.shape
+    points = np.column_stack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel()))
+
+    i = np.arange(nx - 1)[:, None]
+    j = np.arange(ny - 1)[None, :]
+    lower_left = (i * ny + j).ravel()
+    lower_right = lower_left + ny
+    upper_left = lower_left + 1
+    upper_right = lower_right + 1
+    triangles = np.vstack(
+        (
+            np.column_stack((lower_left, lower_right, upper_right)),
+            np.column_stack((lower_left, upper_right, upper_left)),
+        )
+    )
+    meshio.write_points_cells(output_path, points, [("triangle", triangles)])
+    print(
+        f"wrote {output_path} -- {len(points):,} surface points, "
+        f"{len(triangles):,} triangles",
+        flush=True,
+    )
+
+
+def build_double_refined_grid(
+    cell_edge,
+    XMIN,
+    YMIN,
+    ZMIN,
+    Lx_dtm,
+    Ly_dtm,
+    Lz,
+    inner_bounds,
+    outer_bounds,
+    dtm_interp,
+    validate_mesh=False,
+):
     """One full build attempt at the given (isotropic-xy) cell_edge: grid
     sizing, both nested regions' footprints/k-layers, level-1 build_mesh,
     level-2 refine_region_further, and carving. Returns (points, hexes,
     tags, keep, grid_info) -- grid_info is a dict of everything printed/
     reused by the caller (NX, NY, NZ, h_xy, hz, XMAX, YMAX, footprint
-    sizes, conformity results).
+    sizes, conformity results). Set validate_mesh=True to run the exhaustive
+    face-based conformity checks; they are disabled by default for production
+    meshes because they require storing and sorting six faces per hex.
 
     general_rebuild's point-dedup rounds position/cell_size to 5 decimal
     places (see build_mesh's gid() docstring) -- fine for the small,
@@ -122,65 +173,168 @@ def build_double_refined_grid(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz,
     hz = Lz / NZ
     XMAX = XMIN + NX * h_xy  # padded slightly past the DTM's real extent
     YMAX = YMIN + NY * h_xy  # so hx == hy exactly (required by the templates)
-    ZMAX = ZMIN + NZ * hz
-    LX0 = LY0 = LZ0 = 0.0  # local build frame; translated to (XMIN,YMIN,ZMIN) at the end
+    LX0 = LY0 = LZ0 = (
+        0.0  # local build frame; translated to (XMIN,YMIN,ZMIN) at the end
+    )
 
-    (inner_xmin, inner_xmax, inner_ymin, inner_ymax, inner_zbot, inner_ztop) = inner_bounds
-    (outer_xmin, outer_xmax, outer_ymin, outer_ymax, outer_zbot, outer_ztop) = outer_bounds
+    (inner_xmin, inner_xmax, inner_ymin, inner_ymax, inner_zbot, inner_ztop) = (
+        inner_bounds
+    )
+    (outer_xmin, outer_xmax, outer_ymin, outer_ymax, outer_zbot, outer_ztop) = (
+        outer_bounds
+    )
 
     footprint1 = footprint_from_region(
-        XMIN, YMIN, h_xy, h_xy, NX, NY, outer_xmin, outer_xmax, outer_ymin, outer_ymax)
+        XMIN, YMIN, h_xy, h_xy, NX, NY, outer_xmin, outer_xmax, outer_ymin, outer_ymax
+    )
     if not footprint1:
         raise ValueError("outer region does not overlap any coarse cell center")
     k_layers1 = k_range_from_z(outer_zbot, outer_ztop, ZMIN, hz, NZ)
 
     points, hexes, tags = GR.build_mesh(
-        footprint1, NX=NX, NY=NY, NZ=NZ, XMIN=LX0, YMIN=LY0, ZMIN=LZ0,
-        k_layers=k_layers1, cell_size=(h_xy, h_xy, hz))
-    ok1, detail1 = GR.verify_mesh(points, hexes, footprint1, NX, NY, LX0, NX * h_xy, LY0, NY * h_xy,
-                                   LZ0, NZ * hz, n_layers=len(k_layers1))
-    if not ok1:
-        raise RuntimeError(f"level-1 refined mesh is not conforming: {detail1}")
+        footprint1,
+        NX=NX,
+        NY=NY,
+        NZ=NZ,
+        XMIN=LX0,
+        YMIN=LY0,
+        ZMIN=LZ0,
+        k_layers=k_layers1,
+        cell_size=(h_xy, h_xy, hz),
+    )
+    if validate_mesh:
+        ok1, detail1 = GR.verify_mesh(
+            points,
+            hexes,
+            footprint1,
+            NX,
+            NY,
+            LX0,
+            NX * h_xy,
+            LY0,
+            NY * h_xy,
+            LZ0,
+            NZ * hz,
+            n_layers=len(k_layers1),
+        )
+        if not ok1:
+            raise RuntimeError(f"level-1 refined mesh is not conforming: {detail1}")
+    else:
+        detail1 = "skipped (pass validate_mesh=True to run the exhaustive check)"
 
     # level 2: the inner region, one scale finer, nested inside the
     # level-1 urz block (strictly inside the outer region by construction).
     NXf, NYf, NZf = NX * 3, NY * 3, NZ * 3
     hxf, hyf, hzf = h_xy / 3, h_xy / 3, hz / 3
     footprint2 = footprint_from_region(
-        XMIN, YMIN, hxf, hyf, NXf, NYf, inner_xmin, inner_xmax, inner_ymin, inner_ymax)
+        XMIN, YMIN, hxf, hyf, NXf, NYf, inner_xmin, inner_xmax, inner_ymin, inner_ymax
+    )
     if not footprint2:
         raise ValueError("inner region does not overlap any level-1-child cell center")
-    buf_lo = k_layers1[0] * 3 + 2   # +2: mandatory same-scale buffer (local_size=5, buf=2)
+    buf_lo = (
+        k_layers1[0] * 3 + 2
+    )  # +2: mandatory same-scale buffer (local_size=5, buf=2)
     buf_hi = (k_layers1[-1] + 1) * 3 - 1 - 2
-    k_layers2 = [k for k in k_range_from_z(inner_zbot, inner_ztop, ZMIN, hzf, NZf)
-                 if buf_lo <= k <= buf_hi]
+    k_layers2 = [
+        k
+        for k in k_range_from_z(inner_zbot, inner_ztop, ZMIN, hzf, NZf)
+        if buf_lo <= k <= buf_hi
+    ]
     if not k_layers2:
-        raise ValueError("inner region's z range leaves no room for the level-2 vertical buffer")
+        raise ValueError(
+            "inner region's z range leaves no room for the level-2 vertical buffer"
+        )
 
     points, hexes, tags = GR.refine_region_further(
-        points, hexes, tags, footprint2, k_layers2, NXf, NYf, NZf, LX0, LY0, LZ0,
-        cell_size=(hxf, hyf, hzf))
-    ok2 = check_conformity_3d(points, hexes, LX0, NX * h_xy, LY0, NY * h_xy, LZ0, NZ * hz)
-    if not ok2:
-        raise RuntimeError("double-refined mesh is not conforming")
+        points,
+        hexes,
+        tags,
+        footprint2,
+        k_layers2,
+        NXf,
+        NYf,
+        NZf,
+        LX0,
+        LY0,
+        LZ0,
+        cell_size=(hxf, hyf, hzf),
+    )
+    validation_t0 = time.perf_counter()
+    if validate_mesh:
+        ok2 = check_conformity_3d(
+            points, hexes, LX0, NX * h_xy, LY0, NY * h_xy, LZ0, NZ * hz
+        )
+        if not ok2:
+            raise RuntimeError("double-refined mesh is not conforming")
+    else:
+        print(
+            "[conformity] exhaustive level-2 check skipped; continuing to carving",
+            flush=True,
+        )
 
+    carve_t0 = time.perf_counter()
+    print(
+        f"[carve] starting with {len(hexes):,} hexes and {len(points):,} points; "
+        f"mesh construction phase took {carve_t0 - validation_t0:.1f}s",
+        flush=True,
+    )
     points = points + np.array([XMIN, YMIN, ZMIN])
+    print(
+        f"[carve] translated points in {time.perf_counter() - carve_t0:.1f}s; "
+        "materializing hex corner coordinates",
+        flush=True,
+    )
 
     # carve: drop every hex entirely above the terrain at its own (x,y)
     # centroid -- same rule as build_cartgrid_carved.py's `keep`.
     coords = points[hexes]  # (n_hex, 8, 3)
-    terrain_at_centroid = dtm_interp(coords[:, :, :2].mean(axis=1))
+    print(
+        f"[carve] corner coordinates ready in {time.perf_counter() - carve_t0:.1f}s; "
+        f"array size {coords.nbytes / 1024**3:.2f} GiB; computing centroids",
+        flush=True,
+    )
+    centroids = coords[:, :, :2].mean(axis=1)
+    print(
+        f"[carve] centroids ready in {time.perf_counter() - carve_t0:.1f}s; "
+        f"querying terrain for {len(centroids):,} hexes",
+        flush=True,
+    )
+    terrain_at_centroid = interpolate_in_parallel(dtm_interp, centroids)
+    print(
+        f"[carve] terrain interpolation finished in {time.perf_counter() - carve_t0:.1f}s; "
+        "computing keep mask",
+        flush=True,
+    )
     keep = coords[:, :, 2].max(axis=1) <= terrain_at_centroid
+    print(
+        f"[carve] keep mask ready in {time.perf_counter() - carve_t0:.1f}s; "
+        f"keeping {int(keep.sum()):,} / {len(keep):,} hexes",
+        flush=True,
+    )
 
     grid_info = dict(
-        NX=NX, NY=NY, NZ=NZ, h_xy=h_xy, hz=hz, XMAX=XMAX, YMAX=YMAX,
-        n_footprint1=len(footprint1), k_layers1=k_layers1,
-        n_footprint2=len(footprint2), k_layers2=k_layers2,
-        detail1=detail1)
+        NX=NX,
+        NY=NY,
+        NZ=NZ,
+        h_xy=h_xy,
+        hz=hz,
+        XMAX=XMAX,
+        YMAX=YMAX,
+        n_footprint1=len(footprint1),
+        k_layers1=k_layers1,
+        n_footprint2=len(footprint2),
+        k_layers2=k_layers2,
+        detail1=detail1,
+    )
     return points, hexes, tags, keep, grid_info
 
 
-def main(target_total_cells=TARGET_TOTAL_CELLS, outer_scale=OUTER_SCALE, max_iterations=3):
+def main(
+    target_total_cells=TARGET_TOTAL_CELLS,
+    outer_scale=OUTER_SCALE,
+    max_iterations=3,
+    validate_mesh=False,
+):
     dtm = load_dtm_analysis_grid(XYZ_PATH)
     XMIN, YMIN = dtm["xmin"], dtm["ymin"]
     ZMIN = float(np.nanmin(dtm["Z"])) - 50.0
@@ -191,45 +345,78 @@ def main(target_total_cells=TARGET_TOTAL_CELLS, outer_scale=OUTER_SCALE, max_ite
 
     dtm_interp = load_dtm_interpolator(XYZ_PATH)
     kept_fraction = estimate_kept_fraction(
-        dtm_interp, XMIN, dtm["xmax"], YMIN, dtm["ymax"], ZMIN, Lz)
+        dtm_interp, XMIN, dtm["xmax"], YMIN, dtm["ymax"], ZMIN, Lz
+    )
     print(f"estimated below-terrain (kept) fraction of the box: {kept_fraction:.4f}")
 
     # the two nested regions' physical bounds don't depend on grid
     # resolution -- computed once, outside the cell_edge calibration loop.
     inner_zbot, inner_ztop = z_extent_from_region(
-        dtm_interp, INNER_XMIN, INNER_XMAX, INNER_YMIN, INNER_YMAX, REGION_Z_PAD)
-    inner_bounds = (INNER_XMIN, INNER_XMAX, INNER_YMIN, INNER_YMAX, inner_zbot, inner_ztop)
+        dtm_interp, INNER_XMIN, INNER_XMAX, INNER_YMIN, INNER_YMAX, REGION_Z_PAD
+    )
+    inner_bounds = (
+        INNER_XMIN,
+        INNER_XMAX,
+        INNER_YMIN,
+        INNER_YMAX,
+        inner_zbot,
+        inner_ztop,
+    )
     outer_bounds = (
         *scale_interval(INNER_XMIN, INNER_XMAX, outer_scale),
         *scale_interval(INNER_YMIN, INNER_YMAX, outer_scale),
-        *scale_interval(inner_zbot, inner_ztop, outer_scale))
-    print(f"inner region: x=[{INNER_XMIN:.1f},{INNER_XMAX:.1f}] "
-          f"y=[{INNER_YMIN:.1f},{INNER_YMAX:.1f}] z=[{inner_zbot:.1f},{inner_ztop:.1f}]")
-    print(f"outer region ({outer_scale}x, same center): "
-          f"x=[{outer_bounds[0]:.1f},{outer_bounds[1]:.1f}] "
-          f"y=[{outer_bounds[2]:.1f},{outer_bounds[3]:.1f}] "
-          f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]")
+        *scale_interval(inner_zbot, inner_ztop, outer_scale),
+    )
+    print(
+        f"inner region: x=[{INNER_XMIN:.1f},{INNER_XMAX:.1f}] "
+        f"y=[{INNER_YMIN:.1f},{INNER_YMAX:.1f}] z=[{inner_zbot:.1f},{inner_ztop:.1f}]"
+    )
+    print(
+        f"outer region ({outer_scale}x, same center): "
+        f"x=[{outer_bounds[0]:.1f},{outer_bounds[1]:.1f}] "
+        f"y=[{outer_bounds[2]:.1f},{outer_bounds[3]:.1f}] "
+        f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]"
+    )
 
     # plain-grid estimate (ignores refinement inflation), then calibrated
     # against the actual built+carved cell count below.
-    cell_edge = (Lx_dtm * Ly_dtm * Lz * kept_fraction / target_total_cells) ** (1.0 / 3.0)
+    cell_edge = (Lx_dtm * Ly_dtm * Lz * kept_fraction / target_total_cells) ** (
+        1.0 / 3.0
+    )
     for iteration in range(max_iterations):
         points, hexes, tags, keep, grid = build_double_refined_grid(
-            cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz,
-            inner_bounds, outer_bounds, dtm_interp)
+            cell_edge,
+            XMIN,
+            YMIN,
+            ZMIN,
+            Lx_dtm,
+            Ly_dtm,
+            Lz,
+            inner_bounds,
+            outer_bounds,
+            dtm_interp,
+            validate_mesh=validate_mesh,
+        )
         n_kept = int(keep.sum())
         ratio = n_kept / target_total_cells
-        print(f"[iter {iteration}] cell_edge={cell_edge:.3f} -> grid "
-              f"{grid['NX']}x{grid['NY']}x{grid['NZ']}, level 1 "
-              f"{grid['n_footprint1']} cells / level 2 {grid['n_footprint2']} cells, "
-              f"{len(hexes):,} hexes, {n_kept:,} kept (target {target_total_cells:,}, "
-              f"ratio {ratio:.2f})")
+        print(
+            f"[iter {iteration}] cell_edge={cell_edge:.3f} -> grid "
+            f"{grid['NX']}x{grid['NY']}x{grid['NZ']}, level 1 "
+            f"{grid['n_footprint1']} cells / level 2 {grid['n_footprint2']} cells, "
+            f"{len(hexes):,} hexes, {n_kept:,} kept (target {target_total_cells:,}, "
+            f"ratio {ratio:.2f})"
+        )
         if abs(ratio - 1.0) <= SIZE_TOLERANCE or iteration == max_iterations - 1:
             break
-        cell_edge *= ratio ** (1.0 / 3.0)  # refinement inflates cell count beyond the plain-grid estimate
+        cell_edge *= ratio ** (
+            1.0 / 3.0
+        )  # refinement inflates cell count beyond the plain-grid estimate
 
-    print(f"level 1 conformity check: {grid['detail1']}")
-    print("level 2 (combined) conformity check: PASS")
+    if validate_mesh:
+        print(f"level 1 conformity check: {grid['detail1']}")
+        print("level 2 (combined) conformity check: PASS")
+    else:
+        print("conformity checks: skipped (validate_mesh=False)")
 
     kept_hexes = hexes[keep]
     kind_str = [t.split(":")[0] for t, k in zip(tags, keep) if k]
@@ -237,10 +424,14 @@ def main(target_total_cells=TARGET_TOTAL_CELLS, outer_scale=OUTER_SCALE, max_ite
     kind_code = np.array([kind_names.index(k) for k in kind_str], dtype=float)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+    export_dtm_surface(dtm, OUTPUT_DIR / "dtm_surface.stl")
     out_path = OUTPUT_DIR / "cartgrid_carved_refined.vtu"
     meshio.write_points_cells(
-        out_path, points, [("hexahedron", kept_hexes)],
-        cell_data={"kind_code": [kind_code]})
+        out_path,
+        points,
+        [("hexahedron", kept_hexes)],
+        cell_data={"kind_code": [kind_code]},
+    )
     print(f"wrote {out_path} -- kind_code legend: {list(enumerate(kind_names))}")
 
 
