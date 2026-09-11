@@ -79,7 +79,9 @@ included. A surface built elsewhere therefore has to be translated before
 it can meet the grid --
 [`align_surface.py`](src/dtm_voxelization/align_surface.py) lists each
 external STL with the translation that lands it in this frame and writes
-the aligned copy into `output/planes/`.
+the aligned copy into `output/planes/`. The untransformed surfaces are
+tracked under `data/surfaces/`, so the pipeline runs on any checkout --
+a cluster, say -- without the folder they were originally built in.
 
 ## Voxelizing a surface onto the grid
 

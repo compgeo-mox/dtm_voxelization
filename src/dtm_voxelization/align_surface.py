@@ -17,6 +17,11 @@ shifted to (within 2.6 m of) this origin, its z was not.
 Each entry of `SOURCES` names an STL and the translation that lands it in
 this frame; the aligned copy is written to `output/planes/`, where
 `cut_surface.py` picks it up.
+
+Sources are looked up in order, so the tracked copy under `data/surfaces/`
+is found first and the pipeline runs anywhere the repository is checked out
+-- on a cluster, say, where the folder the surface was originally built in
+does not exist.
 """
 
 from pathlib import Path
@@ -32,6 +37,7 @@ GRID_PATH = REPO_ROOT / "output" / "cartgrid_carved_refined.vtu"
 # origin to_xyz.py centred merged.xyz on
 MEAN_COORD = np.array([527837.392605, 5082191.470488, 474.976610])
 
+SURFACE_DIR = REPO_ROOT / "data" / "surfaces"
 SPEED_SCRIPTS = Path(
     "/home/elle/Dropbox/Work/PresentazioniArticoli/progetti/cariplo"
     "/codes/speed-repo/scripts"
@@ -40,7 +46,10 @@ SPEED_SCRIPTS = Path(
 SOURCES = [
     {
         "name": "frattura_verticale",
-        "path": SPEED_SCRIPTS / "frattura_verticale_shifted.stl",
+        "paths": [
+            SURFACE_DIR / "frattura_verticale_shifted.stl",
+            SPEED_SCRIPTS / "frattura_verticale_shifted.stl",
+        ],
         # x/y already carry the shift (to within 2.6 m of MEAN_COORD's own
         # origin, see module docstring); only the elevation is still absolute
         "translation": (0.0, 0.0, -MEAN_COORD[2]),
@@ -48,9 +57,20 @@ SOURCES = [
 ]
 
 
+def locate(source):
+    """First of the source's candidate paths that exists."""
+    for path in source["paths"]:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"{source['name']}: none of these exist:\n  "
+        + "\n  ".join(str(p) for p in source["paths"])
+    )
+
+
 def align(source):
     """Read one source STL, translate it, return the meshio mesh."""
-    mesh = meshio.read(str(source["path"]))
+    mesh = meshio.read(str(locate(source)))
     mesh.points = mesh.points.astype(float) + np.asarray(
         source["translation"], dtype=float
     )
@@ -65,13 +85,14 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for source in SOURCES:
+        found = locate(source)
         mesh = align(source)
         out_path = OUTPUT_DIR / f"{source['name']}.stl"
         meshio.write(str(out_path), mesh)
 
         lo, hi = mesh.points.min(axis=0), mesh.points.max(axis=0)
         print(f"wrote {out_path}")
-        print(f"  from {source['path'].name}, translated by {source['translation']}")
+        print(f"  from {found}, translated by {source['translation']}")
         print(f"  bbox {lo.round(2)} .. {hi.round(2)}")
         if grid_bbox is not None:
             inside = np.all((hi >= grid_bbox[0]) & (lo <= grid_bbox[1]))
