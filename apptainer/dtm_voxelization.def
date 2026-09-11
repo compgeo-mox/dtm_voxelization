@@ -22,6 +22,13 @@ From: ubuntu:24.04
     # no display inside the container: keep matplotlib (pulled in by PorePy)
     # from trying to open one
     export MPLBACKEND=Agg
+    # PorePy decorates functions with @njit(cache=True), and numba writes that
+    # cache next to the source -- impossible in a read-only image, where it
+    # fails the import outright with "no locator available". numba tries
+    # NUMBA_CACHE_DIR before every other location, so point it somewhere
+    # writable; override it with a bind-mounted path to keep the cache warm
+    # across sessions instead of recompiling on first import.
+    export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
 
 %post
     set -e
@@ -81,6 +88,11 @@ From: ubuntu:24.04
     exec "$@"
 
 %test
+    # %test runs against the finished, read-only image, which is exactly the
+    # situation that breaks numba's default in-tree cache -- so this import
+    # is a real check of the runtime, not a formality
+    export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
+    mkdir -p "${NUMBA_CACHE_DIR}"
     python -c "import numpy, scipy, meshio, porepy; print('porepy', porepy.__version__)"
 
 %help

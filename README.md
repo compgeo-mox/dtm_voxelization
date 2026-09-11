@@ -164,6 +164,16 @@ export DTM_OUTPUT=/scratch/$USER/run1              # or set it once, then
 source apptainer/shell.sh
 ```
 
+PoRePy's `@njit(cache=True)` cannot write its cache into a read-only image,
+so the image sets `NUMBA_CACHE_DIR=/tmp/numba_cache`. That is a fresh tmpfs
+each session, meaning numba recompiles those functions on the first import;
+point it at a bind-mounted folder to keep the cache warm:
+
+```bash
+export APPTAINERENV_NUMBA_CACHE_DIR=/workspace/.numba_cache
+source apptainer/shell.sh
+```
+
 `-d` does the same for the input `data/` folder, `-a` (or `$APPTAINER_BIN`)
 picks a specific apptainer executable when it is not on PATH -- it falls back
 to `/opt/mox/apptainer/bin/apptainer`. The container runs with

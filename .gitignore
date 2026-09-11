@@ -10,3 +10,4 @@ output/
 
 # Apptainer images
 apptainer/*.sif
+.numba_cache/
