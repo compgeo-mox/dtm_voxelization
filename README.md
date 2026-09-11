@@ -139,9 +139,11 @@ checks `main` runs on every split.
 Built for clusters where Apptainer is the only container runtime:
 
 ```bash
-apptainer/build.sh          # -> apptainer/dtm_voxelization.sif
-apptainer/shell.sh          # a shell inside it, repo at /workspace
+source apptainer/build.sh   # -> apptainer/dtm_voxelization.sif
+source apptainer/shell.sh   # a shell inside it, repo at /workspace
 ```
+
+Both scripts work either way, sourced or run (`bash apptainer/shell.sh`).
 
 The image carries the dependencies (PoRePy, cloned from GitHub since it is
 not on PyPI, plus numpy/scipy/meshio in a venv at `/opt/venv`); it does NOT
@@ -154,9 +156,12 @@ The output folder is separately bindable, for writing results to scratch
 rather than into the repository:
 
 ```bash
-apptainer/shell.sh -o /scratch/$USER/run1        # /workspace/output -> there
-apptainer/shell.sh -o /scratch/$USER/run1 -- dtm-cut-surface   # one command
-apptainer/shell.sh -b /scratch:/scratch          # any extra bind, repeatable
+source apptainer/shell.sh -o /scratch/$USER/run1   # /workspace/output -> there
+source apptainer/shell.sh -- dtm-cut-surface       # run one command and exit
+source apptainer/shell.sh -b /scratch:/scratch     # extra bind, repeatable
+
+export DTM_OUTPUT=/scratch/$USER/run1              # or set it once, then
+source apptainer/shell.sh
 ```
 
 `-d` does the same for the input `data/` folder, `-a` (or `$APPTAINER_BIN`)
