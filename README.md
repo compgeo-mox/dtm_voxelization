@@ -51,6 +51,124 @@ control the run:
   to estimate the terrain's below-surface fraction (does not affect
   the final grid resolution directly).
 
+## Exporting planes
+
+```bash
+dtm-export-planes
+```
+
+(equivalently: `python -m dtm_voxelization.export_planes_stl`)
+
+Writes one STL per polygon listed in `PLANES` at the top of
+[`export_planes_stl.py`](src/dtm_voxelization/export_planes_stl.py), under
+`output/planes/`. A polygon is just its corner points, in order around the
+boundary; adding a new plane means appending one more entry. Corners given
+as `(x, y)` make a horizontal polygon at the elevation `z` (default 0);
+corners given as `(x, y, z)` are used as-is. Nothing else is read -- the
+DTM plays no part here.
+
+## Importing an external surface
+
+```bash
+dtm-align-surface
+```
+
+`data/xyz/merged.xyz` is not in map coordinates: `to_xyz.py` built it from
+the UTM32N DTM by subtracting the mean of all three coordinate columns, z
+included. A surface built elsewhere therefore has to be translated before
+it can meet the grid --
+[`align_surface.py`](src/dtm_voxelization/align_surface.py) lists each
+external STL with the translation that lands it in this frame and writes
+the aligned copy into `output/planes/`.
+
+## Voxelizing a surface onto the grid
+
+```bash
+dtm-cut-surface
+```
+
+(equivalently: `python -m dtm_voxelization.cut_surface`)
+
+Reads the carved grid from `output/cartgrid_carved_refined.vtu` and every
+STL under `output/planes/`, and computes for each one the *voxelized* image
+of the surface on the grid: the set of existing grid faces that the surface
+cuts through, written to `output/cut_faces/` as a quad mesh (`.vtu`, for
+ParaView) and as `face_nodes` / `cell_pairs` arrays (`.npz`, the input to
+the cell-detachment step).
+
+A face is in the cut set when the segment joining the two cells that share
+it crosses the STL an odd number of times. Parity is what makes the result
+a continuous staircase surface instead of a fuzzy band, and it is exactly
+the set of faces where the two cells must stop sharing nodes once the sides
+are detached. The surface may be curved and need not be aligned with the
+grid; it may also terminate inside the grid, in which case the staircase
+simply ends at the tip. See
+[`cut_surface.py`](src/dtm_voxelization/cut_surface.py) for the tie-breaking
+rules that keep the sheet connected when it lies exactly on the cell centres.
+
+## Detaching the two sides
+
+```bash
+dtm-detach-cells
+```
+
+Splits the grid along a cut-face set from `output/cut_faces/`: the cells
+stay exactly where they are, but the two sides stop sharing points, so
+they become logically disconnected. Each crack node is duplicated once per
+group of incident cells that can still reach each other without crossing
+the crack -- which keeps the crack TIP welded, where the cells wrap around
+the end of the surface, instead of tearing the mesh open to the boundary.
+
+The result goes to `output/detached/<name>_detached.vtu` with three fields
+for checking it:
+
+- `side_color` -- the cells around the crack, coloured by what they can
+  still reach through shared nodes (ignoring the tip rim). Two colours
+  that never mix across the surface means the sides really are separated.
+- `crack_side` -- the same cells labelled -1/+1 from the STL geometry, an
+  independent cross-check of the colouring.
+- `opening` -- a point displacement. *Warp By Vector* on it in ParaView
+  opens the crack, which is only possible because its nodes are now
+  distinct points.
+
+See [`detach_cells.py`](src/dtm_voxelization/detach_cells.py) for the
+checks `main` runs on every split.
+
+## Running in a container (Apptainer)
+
+Built for clusters where Apptainer is the only container runtime:
+
+```bash
+apptainer/build.sh          # -> apptainer/dtm_voxelization.sif
+apptainer/shell.sh          # a shell inside it, repo at /workspace
+```
+
+The image carries the dependencies (PoRePy, cloned from GitHub since it is
+not on PyPI, plus numpy/scipy/meshio in a venv at `/opt/venv`); it does NOT
+carry the code. `shell.sh` bind-mounts this repository at `/workspace`, so
+edits on the host take effect with no rebuild, and puts the same console
+scripts on PATH as a local install (`dtm-cut-surface` and friends, with
+`python -m dtm_voxelization.<module>` always available too).
+
+The output folder is separately bindable, for writing results to scratch
+rather than into the repository:
+
+```bash
+apptainer/shell.sh -o /scratch/$USER/run1        # /workspace/output -> there
+apptainer/shell.sh -o /scratch/$USER/run1 -- dtm-cut-surface   # one command
+apptainer/shell.sh -b /scratch:/scratch          # any extra bind, repeatable
+```
+
+`-d` does the same for the input `data/` folder, `-a` (or `$APPTAINER_BIN`)
+picks a specific apptainer executable when it is not on PATH -- it falls back
+to `/opt/mox/apptainer/bin/apptainer`. The container runs with
+`--containall --no-home --writable-tmpfs`, so nothing of the host is visible
+beyond the binds and writes inside the image land in a throwaway overlay:
+results have to go to `/workspace/output` (or another bind) to survive. See
+[`dtm_voxelization.def`](apptainer/dtm_voxelization.def) for the build, and
+the header of [`build.sh`](apptainer/build.sh) for the cluster knobs
+(`APPTAINER_TMPDIR`, `APPTAINER_CACHEDIR`, `--fakeroot`).
+
 ## Data
 
 `data/xyz/merged.xyz` is the raw DTM point cloud (`X Y Z` columns,
