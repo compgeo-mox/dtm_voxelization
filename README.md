@@ -136,6 +136,19 @@ for checking it:
 See [`detach_cells.py`](src/dtm_voxelization/detach_cells.py) for the
 checks `main` runs on every split.
 
+## Exporting to SPEED
+
+```bash
+dtm-export-speed
+```
+
+Writes each detached grid to `output/speed/<name>.mesh` in the Cubit-style
+ASCII layout SPEED reads, with hexes in VTK/Exodus order and the boundary
+faces as outward-wound quads carrying the labels the `.mate` file refers to:
+`2` lateral and bottom (bounding-box planes), `3` top -- the carved terrain
+and both sides of the detached surface.
+`<name>_boundary.vtu` holds the same quads and tags for ParaView.
+
 ## Running in a container (Apptainer)
 
 Built for clusters where Apptainer is the only container runtime:

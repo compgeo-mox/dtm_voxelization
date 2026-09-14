@@ -27,6 +27,7 @@ dtm-export-planes = "dtm_voxelization.export_planes_stl:main"
 dtm-align-surface = "dtm_voxelization.align_surface:main"
 dtm-cut-surface = "dtm_voxelization.cut_surface:main"
 dtm-detach-cells = "dtm_voxelization.detach_cells:main"
+dtm-export-speed = "dtm_voxelization.export_speed:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

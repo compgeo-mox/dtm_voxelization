@@ -69,7 +69,8 @@ From: ubuntu:24.04
         "dtm-export-planes:export_planes_stl" \
         "dtm-align-surface:align_surface" \
         "dtm-cut-surface:cut_surface" \
-        "dtm-detach-cells:detach_cells" ; do
+        "dtm-detach-cells:detach_cells" \
+        "dtm-export-speed:export_speed" ; do
         name=${entry%%:*}
         module=${entry##*:}
         printf '#!/bin/sh\nexec python -m dtm_voxelization.%s "$@"\n' "${module}" \
@@ -107,5 +108,6 @@ From: ubuntu:24.04
         apptainer/shell.sh -- dtm-cut-surface     # run one command and exit
 
     Inside, these are on PATH: dtm-voxelization, dtm-voxelization-refined,
-    dtm-export-planes, dtm-align-surface, dtm-cut-surface, dtm-detach-cells.
+    dtm-export-planes, dtm-align-surface, dtm-cut-surface, dtm-detach-cells,
+    dtm-export-speed.
     Equivalently, and always correct: python -m dtm_voxelization.<module>
