@@ -7,7 +7,7 @@ output = "../output/san_martino"
 [dtm]
 points = "../data/xyz/san_martino.xyz"   # X Y Z, 2-line header; x/y centred, z elevation
 surface = "poisson"              # overhangs: not z = f(x, y), reconstructed as a 3D surface
-outward = [0.0, -1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
+outward = [0.0, 1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
 trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
 voxel_size = 0.25                # down-sampling before the reconstruction (points are ~0.1 m apart)
 poisson_depth = 10               # octree depth of the reconstruction
