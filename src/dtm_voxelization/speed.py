@@ -25,13 +25,17 @@ Crack sides are still identified, as boundary faces with a geometrically
 coincident twin (only the detachment creates those), to check their number
 against the cut faces of all the case's surfaces.
 
+Tags are decided in the grid's frame, where the domain is a box; the points
+are then mapped back to the DTM's frame for writing (see frame.py).
+
 Writes `speed/<case>.mesh`, plus `speed/<case>_boundary.vtu` with the quads
-and their tags for a look in ParaView.
+and their tags for a look in ParaView, both in the DTM's frame.
 """
 
 import numpy as np
 import meshio
 
+from . import frame
 from .mesh import build_face_table, read_hex_mesh, require
 
 HEX_TAG = 1
@@ -171,6 +175,15 @@ def run(case):
     quads, tags = quads[order], tags[order]
     for tag, label in [(LATERAL_BOTTOM_TAG, "lateral+bottom"), (TOP_TAG, "top+cracks")]:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} quads", flush=True)
+
+    require(case.frame_path, "grid")
+    rotation, center = frame.load(case.frame_path)
+    points = frame.to_dtm(points, rotation, center)
+    print(
+        f"  frame: {'identity' if frame.is_identity(rotation, center) else 'rotated back to the DTM frame'}, "
+        f"bbox {points.min(axis=0).round(3)} .. {points.max(axis=0).round(3)}",
+        flush=True,
+    )
 
     case.speed_dir.mkdir(parents=True, exist_ok=True)
     mesh_path = case.speed_dir / f"{case.name}.mesh"

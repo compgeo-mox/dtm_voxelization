@@ -1,5 +1,6 @@
 """Hex-mesh helpers shared by the pipeline steps."""
 
+import resource
 from pathlib import Path
 
 import meshio
@@ -17,6 +18,11 @@ HEX_FACES = np.array(
         [3, 0, 4, 7],
     ]
 )
+
+
+def peak_memory_gb():
+    """Peak resident memory of this process so far."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024**2
 
 
 def require(path, step):

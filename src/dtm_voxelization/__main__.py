@@ -14,6 +14,7 @@ import time
 
 from . import cut, detach, grid, speed, surfaces
 from .case import load_case
+from .mesh import peak_memory_gb
 
 STEPS = {
     "grid": grid.run,
@@ -36,7 +37,9 @@ def main(argv=None):
 
     case = load_case(argv[0])
     print(f"case {case.name} from {argv[0]}")
-    print(f"  dtm     {case.dtm}")
+    print(f"  dtm     {case.points}: {case.surface}, outward {case.outward}, "
+          f"trim_to_footprint={case.trim_to_footprint}"
+          + (f", voxel {case.voxel_size}, depth {case.poisson_depth}" if case.surface == "poisson" else ""))
     print(f"  output  {case.output}")
     print(
         f"  grid    target {case.target_cells:,} cells, inner region {case.inner_region}, "
@@ -52,7 +55,11 @@ def main(argv=None):
         print(f"\n=== {name} ===", flush=True)
         t0 = time.perf_counter()
         STEPS[name](case)
-        print(f"=== {name} done in {time.perf_counter() - t0:.1f}s ===", flush=True)
+        print(
+            f"=== {name} done in {time.perf_counter() - t0:.1f}s, "
+            f"peak memory {peak_memory_gb():.2f} GB ===",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

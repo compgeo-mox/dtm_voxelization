@@ -40,7 +40,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .mesh import build_face_table, read_hex_mesh, require
-from .surfaces import triangles
+from .surfaces import in_grid_frame
 
 MAX_JITTER_RETRIES = 8  # re-throws allowed for an ambiguous dual edge
 TIE_BREAK = 1e-6  # global surface nudge, in units of the local cell size
@@ -237,7 +237,7 @@ def run(case):
 
     case.cut_dir.mkdir(parents=True, exist_ok=True)
     for surface in case.surfaces:
-        tri = triangles(surface)
+        tri = in_grid_frame(case, surface)
         print(f"\n  {surface.name}: {len(tri)} triangles", flush=True)
         cut = voxelize_surface(points, hexes, tri, face_table=face_table)
         face_nodes, cell_pairs = cut["face_nodes"], cut["cell_pairs"]

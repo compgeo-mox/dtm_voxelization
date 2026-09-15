@@ -11,7 +11,7 @@ output from disk:
 
 | step | does | writes (in the case's `output`) |
 |---|---|---|
-| `grid` | Cartesian hex grid over the DTM with two nested refined regions, carved: hexes entirely above the terrain are dropped | `grid.vtu`, `dtm_surface.stl` |
+| `grid` | Cartesian hex grid over the DTM with two nested refined regions, carved: hexes not in the rock are dropped | `grid.vtu`, `frame.npz`, `dtm_surface.stl` |
 | `surfaces` | fracture surfaces as triangles in the DTM's frame, for inspection | `surfaces/<name>.stl` |
 | `cut` | the voxelized image of each surface on the grid | `cut_faces/<name>.npz`, `.vtu` |
 | `detach` | the grid split along the cut faces of all surfaces at once | `detached.vtu` |
@@ -23,6 +23,13 @@ Python >= 3.11, with numpy, scipy and meshio:
 
 ```bash
 pip install -e .
+```
+
+Cases with `surface = "poisson"` also need Open3D, which ships wheels up to
+Python 3.12:
+
+```bash
+pip install -e ".[poisson]"
 ```
 
 ## Usage
@@ -38,21 +45,27 @@ way to change the surfaces without rebuilding a large grid.
 
 ## A case
 
-A new DTM is a new copy of [`cases/rialba.toml`](cases/rialba.toml). Relative
-paths are resolved against the TOML file's folder; unknown or missing keys
-are errors.
+A new DTM is a new copy of [`cases/rialba.toml`](cases/rialba.toml) (a
+terrain) or [`cases/san_martino.toml`](cases/san_martino.toml) (a wall with
+overhangs). Relative paths are resolved against the TOML file's folder;
+unknown or missing keys are errors.
 
 ```toml
 name = "rialba"                  # also names the SPEED mesh: speed/rialba.mesh
-dtm = "../data/xyz/merged.xyz"   # point cloud, X Y Z columns, 2-line header
 output = "../output/rialba"
+
+[dtm]
+points = "../data/xyz/merged.xyz"   # point cloud, X Y Z columns, 2-line header
+surface = "height_field"            # the terrain is z = f(x, y)
+trim_to_footprint = false           # the points cover the whole rectangle
 
 [grid]
 target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
 inner_region = [-260.0, -10.0, 175.0, 425.0]   # level-2 rectangle: xmin, xmax, ymin, ymax
 region_z_padding = 20.0          # clearance above and below the terrain inside it
-outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z
+outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
+                                 # never less than 1.5 coarse cells wider in x and y
 validate_mesh = false            # exhaustive conformity checks, slow on large grids
 
 [[surfaces]]                     # an STL, moved into the DTM's frame
@@ -68,14 +81,53 @@ corners = [[x1, y1, z1], [x2, y2, z2], [x3, y3, z3], [x4, y4, z4]]
 `surfaces` may be left out entirely: the grid is then exported to SPEED
 without cracks.
 
+A DTM that is not a function of (x, y) -- a wall, overhangs, re-entrances --
+takes a reconstructed surface instead:
+
+```toml
+[dtm]
+points = "../data/xyz/san_martino.xyz"
+surface = "poisson"              # a 3D surface reconstructed from the points
+outward = [0.0, -1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
+trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
+voxel_size = 0.25                # down-sampling before the reconstruction
+poisson_depth = 10               # octree depth of the reconstruction
+```
+
+With `outward` the grid is built in the rotated frame, so `inner_region` is
+given in that frame too: the `grid` step logs the domain rectangle it builds.
+Fracture surfaces stay in the DTM's own frame and are rotated for you.
+
+The terrain surface is written to `dtm_surface.stl` (binary) in the grid's
+frame, so it overlays `grid.vtu`, `detached.vtu` and `cut_faces/` in
+ParaView; for a `poisson` surface only the part over the domain rectangle is
+kept. The SPEED mesh and its `_boundary.vtu` are in the DTM's frame instead.
+
 ## Method
 
+**Terrain.** A `height_field` is the linear interpolant of the points over
+their Delaunay triangulation in (x, y), and a hex is kept when its top lies
+below it at the hex's (x, y) centroid. A `poisson` surface can fold over
+itself: the points are down-sampled, their normals estimated and oriented
+consistently along the surface (so the underside of an overhang points
+down), and a screened Poisson reconstruction (Open3D) gives a triangle mesh.
+A hex is then kept when the vertical ray up from the top of its centroid's
+segment crosses the mesh an odd number of times -- the top is in the rock --
+and the segment down to the hex bottom crosses nothing. On a height field
+this is the same rule. With `outward`, all of it happens in the frame where
+the points' total least-squares plane is horizontal; the rotation is saved
+in `frame.npz`.
+
 **Grid.** The inner region is split twice (3x3x3, then 3x3x3 again), the
-outer region -- the inner one scaled by `outer_scale` -- once, with the
+outer region -- the inner one scaled by `outer_scale`, and in x/y at least 1.5
+coarse cells wider on every side, which the second split's buffer needs -- once, with the
 conforming wall/corner/concave transition templates of
 [`templates.py`](src/dtm_voxelization/templates.py) around each. The coarse
-cell size starts from a plain-grid estimate and is rescaled by the observed
-carved count until it lands within 30% of `target_cells`.
+cell size is first chosen without building anything, from the predicted
+carved count -- coarse cells plus the hexes each refined level adds, weighted
+by the rock fraction of its region -- so that even the first build is near
+`target_cells`; builds then rescale it by the observed carved count until it
+lands within 30%. The log reports the peak memory after each stage.
 
 **Cut.** A grid face belongs to a surface's voxelized image when the segment
 joining the two cells that share it crosses the surface an odd number of
@@ -99,11 +151,12 @@ the cracks.
 wound outward; both are checked before writing. Quad tags, for the `.mate`
 file: `2` lateral and bottom faces (bounding-box planes), `3` everything else
 on the boundary -- the carved terrain and both sides of every crack. Hexes
-carry tag `1`.
+carry tag `1`. Tags are decided in the grid's frame; the mesh is written back
+in the DTM's frame.
 
 ## Running in a container (Apptainer)
 
-The image carries the dependencies, not the code: `shell.sh` bind-mounts this
+The image carries the dependencies, Open3D included (Python 3.12), not the code: `shell.sh` bind-mounts this
 repository at `/workspace`, so edits on the host take effect without a
 rebuild.
 
@@ -134,6 +187,9 @@ visible, and results must land in one of them to survive. See the header of
   (527837.392605, 5082191.470488, 474.976610), z included.
 - `data/surfaces/frattura_verticale_shifted.stl` -- a vertical fracture, x/y
   already in that frame, z still absolute (hence the case's translation).
+- `data/xyz/san_martino.xyz` -- the San Martino wall from photogrammetry,
+  818,623 points: UTM32N minus (530019.39293486, 5079649.72368661) in x/y,
+  z elevation.
 
 ## Issues
 

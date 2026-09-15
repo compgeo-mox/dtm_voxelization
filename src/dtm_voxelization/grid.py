@@ -2,29 +2,34 @@
 
 A Cartesian grid over the DTM's extent with two NESTED regions locally
 refined -- 3x3x3 hex split plus the wall/corner/concave transition layers
-from general_rebuild.py's template scheme -- then carved: every hex entirely
-above the terrain is dropped.
+from general_rebuild.py's template scheme -- then carved: every hex not in
+the rock is dropped. What "in the rock" means is the terrain's business
+(terrain.py), and so is the frame the grid is built in (frame.py).
 
 The inner region (the case's `inner_region`) gets a DOUBLE refinement (level
 1, then a further nested level-2 split inside it); the outer region is that
 same rectangle scaled by `outer_scale` in x, y AND z, same center, and gets
 only the level-1 split -- it exists to give the inner region's level-2 split
 the buffer ring of level-1 'urz' cells it needs (see
-general_rebuild.refine_region_further's docstring).
+general_rebuild.refine_region_further's docstring). So in x/y it is never
+less than 1.5 coarse cells wider than the inner region on every side, whatever
+the scale: see `outer_region`.
 
 The refinement templates require an ISOTROPIC x/y cell size (only z may
 differ, see templates.apply_matrix's docstring), so NX/NY/h_xy are locked
 together -- the domain's x/y extent is padded out to an exact multiple of
 h_xy to make that possible.
 
-Sizing to `target_cells`: the plain-grid cell_edge formula assumes 1 hex per
-cell; refinement replaces cells with 27/13/5-hex templates, so it
-underestimates the final count once the nested regions are added. Rather
-than modeling that inflation analytically (it depends on how many coarse
-cells the fixed physical regions cover, which itself depends on the cell
-size being solved for), `run` measures it: build+carve once with the
-plain-grid estimate, then rescale cell_edge by the observed ratio to target
-and rebuild -- reusing the exact same build/carve code each time.
+Sizing to `target_cells` happens twice. First without building anything:
+`predicted_cells` counts the coarse cells, plus 26 more hexes per refined cell
+of each level, each weighted by the rock fraction of its region, and
+cell_edge is rescaled until that count meets the target. This matters because
+a refined region that is large for the domain inflates the count by one to
+two orders of magnitude, and a first build sized on the plain grid alone
+would be that much too big -- enough to exhaust memory inside the level-2
+split before any correction could happen. Then the real builds: build+carve,
+rescale cell_edge by the observed ratio to target (the prediction ignores the
+transition templates) and rebuild, reusing the exact same code each time.
 """
 
 import time
@@ -32,29 +37,15 @@ import time
 import numpy as np
 import meshio
 
+from . import frame
 from . import general_rebuild as GR
-from .dtm_io import (
-    interpolate_in_parallel,
-    load_dtm_analysis_grid,
-    load_dtm_interpolator,
-)
+from . import terrain as terrain_surfaces
 from .geometry_checks import check_conformity_3d
+from .mesh import peak_memory_gb
 
-FRACTION_SAMPLE_N = 400  # resolution of the coarse pre-sample used only to size the grid
 SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
 MAX_ITERATIONS = 3
-
-
-def estimate_kept_fraction(
-    dtm_interp, xmin, xmax, ymin, ymax, zmin, lz, n=FRACTION_SAMPLE_N
-):
-    """Fraction of the domain box below the terrain, from a coarse sample."""
-    xs = xmin + (np.arange(n) + 0.5) * (xmax - xmin) / n
-    ys = ymin + (np.arange(n) + 0.5) * (ymax - ymin) / n
-    xx, yy = np.meshgrid(xs, ys, indexing="ij")
-    terrain = dtm_interp(np.column_stack([xx.ravel(), yy.ravel()])).reshape(n, n)
-    frac = np.clip((terrain - zmin) / lz, 0, 1)
-    return float(np.mean(frac))
+PRESIZE_ITERATIONS = 30
 
 
 def footprint_from_region(xmin, ymin, hx, hy, nx, ny, rxmin, rxmax, rymin, rymax):
@@ -65,16 +56,6 @@ def footprint_from_region(xmin, ymin, hx, hy, nx, ny, rxmin, rxmax, rymin, rymax
     ii = np.where((cx >= rxmin) & (cx <= rxmax))[0]
     jj = np.where((cy >= rymin) & (cy <= rymax))[0]
     return {(int(i), int(j)) for i in ii for j in jj}
-
-
-def z_extent_from_region(dtm_interp, rxmin, rxmax, rymin, rymax, pad, n=50):
-    """[DTM min - pad, DTM max + pad] within the rectangle, sampled from
-    the full-accuracy interpolator."""
-    xs = np.linspace(rxmin, rxmax, n)
-    ys = np.linspace(rymin, rymax, n)
-    xx, yy = np.meshgrid(xs, ys, indexing="ij")
-    terrain = dtm_interp(np.column_stack([xx.ravel(), yy.ravel()]))
-    return float(np.nanmin(terrain)) - pad, float(np.nanmax(terrain)) + pad
 
 
 def k_range_from_z(zbot, ztop, zmin, hz, nz):
@@ -91,29 +72,52 @@ def scale_interval(lo, hi, scale):
     return c - h, c + h
 
 
-def export_dtm_surface(dtm, output_path):
-    """Export the regular DTM analysis grid as an upward-facing STL surface."""
-    x_grid, y_grid, z_grid = dtm["X"], dtm["Y"], dtm["Z"]
-    nx, ny = z_grid.shape
-    points = np.column_stack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel()))
-
-    i = np.arange(nx - 1)[:, None]
-    j = np.arange(ny - 1)[None, :]
-    lower_left = (i * ny + j).ravel()
-    lower_right = lower_left + ny
-    upper_left = lower_left + 1
-    upper_right = lower_right + 1
-    triangles = np.vstack(
-        (
-            np.column_stack((lower_left, lower_right, upper_right)),
-            np.column_stack((lower_left, upper_right, upper_left)),
-        )
+def outer_region(inner_bounds, outer_scale, cell_edge):
+    """Level-1 region for a build at `cell_edge`: the inner region scaled by
+    `outer_scale` about its center, and in x/y at least 1.5 coarse cells wider
+    on every side. The level-2 buffer reaches 2/3 of a coarse cell past the
+    inner region, a coarse cell is refined only when its center is inside, and
+    a child's center is within 1/3 of a cell of its parent's: 1 cell of margin
+    is the least that always works, 1.5 keeps clear of rounding ties."""
+    xmin, xmax, ymin, ymax, zbot, ztop = inner_bounds
+    sxmin, sxmax = scale_interval(xmin, xmax, outer_scale)
+    symin, symax = scale_interval(ymin, ymax, outer_scale)
+    margin = 1.5 * cell_edge
+    return (
+        min(sxmin, xmin - margin),
+        max(sxmax, xmax + margin),
+        min(symin, ymin - margin),
+        max(symax, ymax + margin),
+        *scale_interval(zbot, ztop, outer_scale),
     )
-    meshio.write_points_cells(output_path, points, [("triangle", triangles)])
-    print(
-        f"wrote {output_path} -- {len(points):,} surface points, "
-        f"{len(triangles):,} triangles",
-        flush=True,
+
+
+def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, outer_scale, fractions):
+    """Carved cells a build at `cell_edge` would give, without building it:
+    the same grid sizing, footprints and layers as build_double_refined_grid,
+    with each level's refined cells adding 26 hexes weighted by the rock
+    fraction of its region. Transition templates are ignored."""
+    NX = max(1, round(Lx_dtm / cell_edge))
+    NY = max(1, round(Ly_dtm / cell_edge))
+    NZ = max(1, round(Lz / cell_edge))
+    hz = Lz / NZ
+    outer_bounds = outer_region(inner_bounds, outer_scale, cell_edge)
+    footprint1 = footprint_from_region(XMIN, YMIN, cell_edge, cell_edge, NX, NY, *outer_bounds[:4])
+    k_layers1 = k_range_from_z(outer_bounds[4], outer_bounds[5], ZMIN, hz, NZ)
+    footprint2 = footprint_from_region(
+        XMIN, YMIN, cell_edge / 3, cell_edge / 3, 3 * NX, 3 * NY, *inner_bounds[:4]
+    )
+    buf_lo, buf_hi = k_layers1[0] * 3 + 2, (k_layers1[-1] + 1) * 3 - 1 - 2
+    k_layers2 = [
+        k
+        for k in k_range_from_z(inner_bounds[4], inner_bounds[5], ZMIN, hz / 3, 3 * NZ)
+        if buf_lo <= k <= buf_hi
+    ]
+    f_domain, f_outer, f_inner = fractions
+    return (
+        f_domain * NX * NY * NZ
+        + 26 * f_outer * len(footprint1) * len(k_layers1)
+        + 26 * f_inner * len(footprint2) * len(k_layers2)
     )
 
 
@@ -127,7 +131,7 @@ def build_double_refined_grid(
     Lz,
     inner_bounds,
     outer_bounds,
-    dtm_interp,
+    terrain,
     validate_mesh=False,
 ):
     """One full build attempt at the given (isotropic-xy) cell_edge: grid
@@ -187,6 +191,11 @@ def build_double_refined_grid(
         k_layers=k_layers1,
         cell_size=(h_xy, h_xy, hz),
     )
+    print(
+        f"[level 1] {len(footprint1)} footprint cells x {len(k_layers1)} layers -> "
+        f"{len(hexes):,} hexes, peak memory {peak_memory_gb():.2f} GB",
+        flush=True,
+    )
     if validate_mesh:
         ok1, detail1 = GR.verify_mesh(
             points,
@@ -244,6 +253,11 @@ def build_double_refined_grid(
         LZ0,
         cell_size=(hxf, hyf, hzf),
     )
+    print(
+        f"[level 2] {len(footprint2)} footprint cells x {len(k_layers2)} layers -> "
+        f"{len(hexes):,} hexes, peak memory {peak_memory_gb():.2f} GB",
+        flush=True,
+    )
     validation_t0 = time.perf_counter()
     if validate_mesh:
         ok2 = check_conformity_3d(
@@ -270,29 +284,17 @@ def build_double_refined_grid(
         flush=True,
     )
 
-    # carve: drop every hex entirely above the terrain at its own (x,y) centroid
+    # carve: drop every hex that is not in the rock
     coords = points[hexes]  # (n_hex, 8, 3)
     print(
         f"[carve] corner coordinates ready in {time.perf_counter() - carve_t0:.1f}s; "
-        f"array size {coords.nbytes / 1024**3:.2f} GiB; computing centroids",
+        f"array size {coords.nbytes / 1024**3:.2f} GiB; asking the terrain",
         flush=True,
     )
-    centroids = coords[:, :, :2].mean(axis=1)
-    print(
-        f"[carve] centroids ready in {time.perf_counter() - carve_t0:.1f}s; "
-        f"querying terrain for {len(centroids):,} hexes",
-        flush=True,
-    )
-    terrain_at_centroid = interpolate_in_parallel(dtm_interp, centroids)
-    print(
-        f"[carve] terrain interpolation finished in {time.perf_counter() - carve_t0:.1f}s; "
-        "computing keep mask",
-        flush=True,
-    )
-    keep = coords[:, :, 2].max(axis=1) <= terrain_at_centroid
+    keep = terrain.keep(coords)
     print(
         f"[carve] keep mask ready in {time.perf_counter() - carve_t0:.1f}s; "
-        f"keeping {int(keep.sum()):,} / {len(keep):,} hexes",
+        f"keeping {int(keep.sum()):,} / {len(keep):,} hexes; peak memory {peak_memory_gb():.2f} GB",
         flush=True,
     )
 
@@ -314,26 +316,39 @@ def build_double_refined_grid(
 
 
 def run(case):
-    """Build the refined carved grid of the case's DTM -> grid.vtu, dtm_surface.stl."""
-    dtm = load_dtm_analysis_grid(case.dtm)
-    XMIN, YMIN = dtm["xmin"], dtm["ymin"]
-    ZMIN = float(np.nanmin(dtm["Z"])) - case.z_padding
-    ZMAX = float(np.nanmax(dtm["Z"])) + case.z_padding
-    Lz = ZMAX - ZMIN
-    Lx_dtm = dtm["xmax"] - XMIN
-    Ly_dtm = dtm["ymax"] - YMIN
+    """Build the refined carved grid of the case's DTM -> grid.vtu, frame.npz,
+    dtm_surface.stl, all in the grid's frame."""
+    terrain, rotation, center = terrain_surfaces.build(case)
+    print(f"terrain ready, peak memory {peak_memory_gb():.2f} GB", flush=True)
+    case.output.mkdir(parents=True, exist_ok=True)
+    frame.save(case.frame_path, rotation, center)
+    print(f"wrote {case.frame_path}", flush=True)
 
-    dtm_interp = load_dtm_interpolator(case.dtm)
-    kept_fraction = estimate_kept_fraction(
-        dtm_interp, XMIN, dtm["xmax"], YMIN, dtm["ymax"], ZMIN, Lz
+    XMIN, YMIN = terrain.xmin, terrain.ymin
+    ZMIN = terrain.zmin - case.z_padding
+    ZMAX = terrain.zmax + case.z_padding
+    Lz = ZMAX - ZMIN
+    Lx_dtm = terrain.xmax - XMIN
+    Ly_dtm = terrain.ymax - YMIN
+    print(
+        f"domain x=[{XMIN:.2f},{terrain.xmax:.2f}] y=[{YMIN:.2f},{terrain.ymax:.2f}] "
+        f"z=[{ZMIN:.2f},{ZMAX:.2f}] (terrain z [{terrain.zmin:.2f},{terrain.zmax:.2f}] "
+        f"+ padding {case.z_padding})",
+        flush=True,
     )
-    print(f"estimated below-terrain (kept) fraction of the box: {kept_fraction:.4f}")
+
+    kept_fraction = terrain.kept_fraction(terrain.xmin, terrain.xmax, terrain.ymin, terrain.ymax, ZMIN, Lz)
+    print(
+        f"estimated below-terrain (kept) fraction of the box: {kept_fraction:.4f}, "
+        f"peak memory {peak_memory_gb():.2f} GB",
+        flush=True,
+    )
 
     # the two nested regions' physical bounds don't depend on grid
     # resolution -- computed once, outside the cell_edge calibration loop.
     inner_xmin, inner_xmax, inner_ymin, inner_ymax = case.inner_region
-    inner_zbot, inner_ztop = z_extent_from_region(
-        dtm_interp, inner_xmin, inner_xmax, inner_ymin, inner_ymax, case.region_z_padding
+    inner_zbot, inner_ztop = terrain.z_extent(
+        inner_xmin, inner_xmax, inner_ymin, inner_ymax, case.region_z_padding
     )
     inner_bounds = (
         inner_xmin,
@@ -343,7 +358,7 @@ def run(case):
         inner_zbot,
         inner_ztop,
     )
-    outer_bounds = (
+    scaled_outer = (
         *scale_interval(inner_xmin, inner_xmax, case.outer_scale),
         *scale_interval(inner_ymin, inner_ymax, case.outer_scale),
         *scale_interval(inner_zbot, inner_ztop, case.outer_scale),
@@ -353,18 +368,51 @@ def run(case):
         f"y=[{inner_ymin:.1f},{inner_ymax:.1f}] z=[{inner_zbot:.1f},{inner_ztop:.1f}]"
     )
     print(
-        f"outer region ({case.outer_scale}x, same center): "
-        f"x=[{outer_bounds[0]:.1f},{outer_bounds[1]:.1f}] "
-        f"y=[{outer_bounds[2]:.1f},{outer_bounds[3]:.1f}] "
-        f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]"
+        f"outer region ({case.outer_scale}x, same center, widened per build to 1.5 "
+        f"coarse cells of margin): x=[{scaled_outer[0]:.1f},{scaled_outer[1]:.1f}] "
+        f"y=[{scaled_outer[2]:.1f},{scaled_outer[3]:.1f}] "
+        f"z=[{scaled_outer[4]:.1f},{scaled_outer[5]:.1f}]"
     )
 
-    # plain-grid estimate (ignores refinement inflation), then calibrated
-    # against the actual built+carved cell count below.
+    # size without building: start from the plain-grid estimate and rescale
+    # until the predicted carved count, refinement included, meets the target
+    fractions = (
+        kept_fraction,
+        terrain.kept_fraction(*scaled_outer[:4], scaled_outer[4], scaled_outer[5] - scaled_outer[4]),
+        terrain.kept_fraction(*inner_bounds[:4], inner_bounds[4], inner_bounds[5] - inner_bounds[4]),
+    )
     cell_edge = (Lx_dtm * Ly_dtm * Lz * kept_fraction / case.target_cells) ** (
         1.0 / 3.0
     )
+    predicted = predicted_cells(
+        cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, case.outer_scale, fractions
+    )
+    print(
+        f"[presize] rock fractions: domain {fractions[0]:.3f}, outer {fractions[1]:.3f}, "
+        f"inner {fractions[2]:.3f}; plain-grid cell_edge {cell_edge:.3f} would give "
+        f"{predicted:,.0f} carved cells ({predicted / case.target_cells:.1f}x target)",
+        flush=True,
+    )
+    for _ in range(PRESIZE_ITERATIONS):
+        if predicted <= 0 or abs(predicted / case.target_cells - 1.0) < 0.02:
+            break
+        cell_edge *= (predicted / case.target_cells) ** (1.0 / 3.0)
+        predicted = predicted_cells(
+            cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, case.outer_scale, fractions
+        )
+    print(
+        f"[presize] cell_edge {cell_edge:.3f} -> predicted {predicted:,.0f} carved cells "
+        f"(target {case.target_cells:,})",
+        flush=True,
+    )
     for iteration in range(MAX_ITERATIONS):
+        outer_bounds = outer_region(inner_bounds, case.outer_scale, cell_edge)
+        print(
+            f"[iter {iteration}] outer region at cell_edge {cell_edge:.3f}: "
+            f"x=[{outer_bounds[0]:.1f},{outer_bounds[1]:.1f}] y=[{outer_bounds[2]:.1f},{outer_bounds[3]:.1f}] "
+            f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]",
+            flush=True,
+        )
         points, hexes, tags, keep, grid = build_double_refined_grid(
             cell_edge,
             XMIN,
@@ -375,7 +423,7 @@ def run(case):
             Lz,
             inner_bounds,
             outer_bounds,
-            dtm_interp,
+            terrain,
             validate_mesh=case.validate_mesh,
         )
         n_kept = int(keep.sum())
@@ -385,7 +433,8 @@ def run(case):
             f"{grid['NX']}x{grid['NY']}x{grid['NZ']}, level 1 "
             f"{grid['n_footprint1']} cells / level 2 {grid['n_footprint2']} cells, "
             f"{len(hexes):,} hexes, {n_kept:,} kept (target {case.target_cells:,}, "
-            f"ratio {ratio:.2f})"
+            f"ratio {ratio:.2f}), peak memory {peak_memory_gb():.2f} GB",
+            flush=True,
         )
         if abs(ratio - 1.0) <= SIZE_TOLERANCE or iteration == MAX_ITERATIONS - 1:
             break
@@ -404,8 +453,7 @@ def run(case):
     kind_names = sorted(set(kind_str))
     kind_code = np.array([kind_names.index(k) for k in kind_str], dtype=float)
 
-    case.output.mkdir(parents=True, exist_ok=True)
-    export_dtm_surface(dtm, case.dtm_surface_path)
+    terrain.export(case.dtm_surface_path)
     meshio.write_points_cells(
         case.grid_path,
         points,

@@ -1,0 +1,23 @@
+# San Martino: a sub-vertical rock wall with overhangs, from photogrammetry.
+# Relative paths are resolved against this file's folder.
+
+name = "san_martino"             # also names the SPEED mesh: speed/san_martino.mesh
+output = "../output/san_martino"
+
+[dtm]
+points = "../data/xyz/san_martino.xyz"   # X Y Z, 2-line header; x/y centred, z elevation
+surface = "poisson"              # overhangs: not z = f(x, y), reconstructed as a 3D surface
+outward = [0.0, -1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
+trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
+voxel_size = 0.25                # down-sampling before the reconstruction (points are ~0.1 m apart)
+poisson_depth = 10               # octree depth of the reconstruction
+
+# in the grid's frame (the rotated one): the grid step logs the domain it builds
+[grid]
+target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
+z_padding = 30.0                 # rock behind the wall below its deepest point, air above
+inner_region = [-27.0, 27.0, -26.0, -10.0]   # level-2 rectangle, over the main re-entrance
+region_z_padding = 5.0           # clearance around the wall inside it
+outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
+                                 # never less than 1.5 coarse cells wider in x and y
+validate_mesh = false            # exhaustive conformity checks, slow on large grids

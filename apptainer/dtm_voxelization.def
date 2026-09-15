@@ -26,12 +26,15 @@ From: ubuntu:24.04
     apt-get update -y
     apt-get install -y --no-install-recommends \
         python3 python3-venv ca-certificates vim less
+    # Open3D links against these even when used headlessly
+    apt-get install -y --no-install-recommends libgl1 libgomp1 libudev1
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 
+    # ubuntu:24.04's python3 is 3.12, the newest Open3D ships wheels for
     python3 -m venv ${VENV}
     ${VENV}/bin/pip install --no-cache-dir --upgrade pip
-    ${VENV}/bin/pip install --no-cache-dir numpy scipy meshio
+    ${VENV}/bin/pip install --no-cache-dir numpy scipy meshio open3d-cpu
 
     # the console script from pyproject.toml, as a thin wrapper
     printf '#!/bin/sh\nexec python -m dtm_voxelization "$@"\n' > /usr/local/bin/dtm-voxelization
@@ -48,7 +51,7 @@ From: ubuntu:24.04
     exec "$@"
 
 %test
-    python -c "import tomllib, numpy, scipy, meshio; print('numpy', numpy.__version__, 'scipy', scipy.__version__, 'meshio', meshio.__version__)"
+    python -c "import tomllib, numpy, scipy, meshio, open3d; print('numpy', numpy.__version__, 'scipy', scipy.__version__, 'meshio', meshio.__version__, 'open3d', open3d.__version__)"
 
 %help
     dtm_voxelization -- refined, terrain-carved hex grids of a DTM, split along

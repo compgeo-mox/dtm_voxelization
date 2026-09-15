@@ -16,6 +16,10 @@ dependencies = [
     "meshio",
 ]
 
+[project.optional-dependencies]
+# surface = "poisson" in a case; Open3D ships wheels up to Python 3.12
+poisson = ["open3d-cpu"]
+
 [project.urls]
 Repository = "https://github.com/compgeo-mox/dtm_voxelization"
 

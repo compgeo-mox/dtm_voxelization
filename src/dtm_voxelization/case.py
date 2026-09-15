@@ -25,8 +25,13 @@ class Surface:
 @dataclass(frozen=True)
 class Case:
     name: str
-    dtm: Path
     output: Path
+    points: Path  # the DTM's point cloud
+    surface: str  # "height_field" or "poisson"
+    outward: tuple | None  # rotate the points' least-squares plane horizontal, this side up
+    trim_to_footprint: bool  # domain = largest rectangle inside the points' footprint
+    voxel_size: float | None  # poisson only
+    poisson_depth: int | None  # poisson only
     target_cells: int
     z_padding: float
     inner_region: tuple  # xmin, xmax, ymin, ymax
@@ -34,6 +39,10 @@ class Case:
     outer_scale: float
     validate_mesh: bool
     surfaces: tuple
+
+    @property
+    def frame_path(self):
+        return self.output / "frame.npz"
 
     @property
     def grid_path(self):
@@ -75,7 +84,24 @@ def load_case(path):
         data = tomllib.load(f)
     root = path.parent
 
-    _check_keys(data, {"name", "dtm", "output", "grid"}, {"surfaces"}, path.name)
+    _check_keys(data, {"name", "output", "dtm", "grid"}, {"surfaces"}, path.name)
+
+    dtm = data["dtm"]
+    where = f"{path.name} [dtm]"
+    if dtm.get("surface") == "poisson":
+        _check_keys(
+            dtm,
+            {"points", "surface", "trim_to_footprint", "voxel_size", "poisson_depth"},
+            {"outward"},
+            where,
+        )
+    elif dtm.get("surface") == "height_field":
+        _check_keys(dtm, {"points", "surface", "trim_to_footprint"}, set(), where)
+    else:
+        raise ValueError(f"{where}: surface must be 'height_field' or 'poisson'")
+    if "outward" in dtm and len(dtm["outward"]) != 3:
+        raise ValueError(f"{where}: outward must be [x, y, z]")
+
     grid = data["grid"]
     grid_keys = {
         "target_cells",
@@ -114,8 +140,13 @@ def load_case(path):
 
     return Case(
         name=data["name"],
-        dtm=root / data["dtm"],
         output=root / data["output"],
+        points=root / dtm["points"],
+        surface=dtm["surface"],
+        outward=tuple(float(v) for v in dtm["outward"]) if "outward" in dtm else None,
+        trim_to_footprint=bool(dtm["trim_to_footprint"]),
+        voxel_size=float(dtm["voxel_size"]) if "voxel_size" in dtm else None,
+        poisson_depth=int(dtm["poisson_depth"]) if "poisson_depth" in dtm else None,
         target_cells=int(grid["target_cells"]),
         z_padding=float(grid["z_padding"]),
         inner_region=tuple(float(v) for v in grid["inner_region"]),
