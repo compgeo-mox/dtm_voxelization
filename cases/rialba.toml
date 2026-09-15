@@ -1,0 +1,25 @@
+# Rialba. Relative paths are resolved against this file's folder.
+
+name = "rialba"                  # also names the SPEED mesh: speed/rialba.mesh
+dtm = "../data/xyz/merged.xyz"   # point cloud, X Y Z columns, 2-line header
+output = "../output/rialba"
+
+[grid]
+target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
+z_padding = 50.0                 # domain below the lowest and above the highest DTM point
+inner_region = [-260.0, -10.0, 175.0, 425.0]   # level-2 rectangle: xmin, xmax, ymin, ymax
+region_z_padding = 20.0          # clearance above and below the terrain inside it
+outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z
+validate_mesh = false            # exhaustive conformity checks, slow on large grids
+
+# merged.xyz is the UTM32N DTM minus its mean (527837.392605, 5082191.470488,
+# 474.976610), z included: the STL's x/y already carry that shift, its z does not
+[[surfaces]]
+name = "frattura_verticale"
+stl = "../data/surfaces/frattura_verticale_shifted.stl"
+translation = [0.0, 0.0, -474.976610]
+
+# a polygon given directly in the DTM's frame, corners in order:
+# [[surfaces]]
+# name = "piano_1"
+# corners = [[x1, y1, z1], [x2, y2, z2], [x3, y3, z3], [x4, y4, z4]]

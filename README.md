@@ -1,208 +1,139 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-# dtm_voxelization: voxelizing real terrain into PorePy grids
+# dtm_voxelization
 
-dtm_voxelization builds a carved [PorePy](https://github.com/pmgbergen/porepy)
-Cartesian grid out of a real DTM (digital terrain model): a plain
-`CartGrid` with an anisotropic per-axis resolution chosen so the
-domain's real extents come out close to isotropic cells, then every
-cell entirely above the true terrain surface is carved away.
+Refined, terrain-carved hex grids of a real DTM (digital terrain model), split
+along fracture surfaces and exported to [SPEED](https://bitbucket.org/ilmaz/speed).
 
-**Key Features:**
-- Automatic per-axis (NX, NY, NZ) sizing so the *carved* result lands
-  close to a target total cell count
-- Sizing based on the real terrain's own below-surface fraction of the
-  padded domain box, estimated cheaply from a coarse sample of the DTM
-- Full-resolution scattered-point DTM interpolation (no intermediate
-  regular-grid resampling) when carving
-- Seamless integration with [PorePy](https://github.com/pmgbergen/porepy)
+A **case** -- one DTM, its refinement region and its fracture surfaces -- is a
+TOML file. Running it goes through five steps, each reading the previous one's
+output from disk:
 
-## Installation for Linux
+| step | does | writes (in the case's `output`) |
+|---|---|---|
+| `grid` | Cartesian hex grid over the DTM with two nested refined regions, carved: hexes entirely above the terrain are dropped | `grid.vtu`, `dtm_surface.stl` |
+| `surfaces` | fracture surfaces as triangles in the DTM's frame, for inspection | `surfaces/<name>.stl` |
+| `cut` | the voxelized image of each surface on the grid | `cut_faces/<name>.npz`, `.vtu` |
+| `detach` | the grid split along the cut faces of all surfaces at once | `detached.vtu` |
+| `speed` | SPEED mesh with labelled boundary quads | `speed/<case>.mesh`, `speed/<case>_boundary.vtu` |
 
-dtm_voxelization requires Python >= 3.10.
+## Installation
 
-Since dtm_voxelization depends on [PorePy](https://github.com/pmgbergen/porepy),
-we assume that the latter is accessible in your PYTHONPATH (it is also
-declared as a dependency below, so a plain install below will normally
-pull it in on its own).
-To install dtm_voxelization
+Python >= 3.11, with numpy, scipy and meshio:
+
 ```bash
 pip install -e .
 ```
-avoid the `-e` if you do not want the editable version.
 
 ## Usage
 
 ```bash
-dtm-voxelization
+python -m dtm_voxelization cases/rialba.toml                   # all steps
+python -m dtm_voxelization cases/rialba.toml cut detach speed  # only these
 ```
 
-(equivalently: `python -m dtm_voxelization.build_cartgrid_carved`)
+(`dtm-voxelization` once installed.) Steps always run in pipeline order,
+whatever order they are given in. Rerunning only the later ones is the usual
+way to change the surfaces without rebuilding a large grid.
 
-Reads the point cloud at `data/xyz/merged.xyz`, builds the carved
-Cartesian grid, and writes the result as VTU files under `output/`.
+## A case
 
-Two constants at the top of
-[`build_cartgrid_carved.py`](src/dtm_voxelization/build_cartgrid_carved.py)
-control the run:
+A new DTM is a new copy of [`cases/rialba.toml`](cases/rialba.toml). Relative
+paths are resolved against the TOML file's folder; unknown or missing keys
+are errors.
 
-- `TARGET_TOTAL_CELLS` -- desired number of cells in the carved grid.
-- `FRACTION_SAMPLE_N` -- resolution of the coarse pre-sample used only
-  to estimate the terrain's below-surface fraction (does not affect
-  the final grid resolution directly).
+```toml
+name = "rialba"                  # also names the SPEED mesh: speed/rialba.mesh
+dtm = "../data/xyz/merged.xyz"   # point cloud, X Y Z columns, 2-line header
+output = "../output/rialba"
 
-## Exporting planes
+[grid]
+target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
+z_padding = 50.0                 # domain below the lowest and above the highest DTM point
+inner_region = [-260.0, -10.0, 175.0, 425.0]   # level-2 rectangle: xmin, xmax, ymin, ymax
+region_z_padding = 20.0          # clearance above and below the terrain inside it
+outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z
+validate_mesh = false            # exhaustive conformity checks, slow on large grids
 
-```bash
-dtm-export-planes
+[[surfaces]]                     # an STL, moved into the DTM's frame
+name = "frattura_verticale"
+stl = "../data/surfaces/frattura_verticale_shifted.stl"
+translation = [0.0, 0.0, -474.976610]
+
+[[surfaces]]                     # or a polygon given directly in that frame
+name = "piano_1"
+corners = [[x1, y1, z1], [x2, y2, z2], [x3, y3, z3], [x4, y4, z4]]
 ```
 
-(equivalently: `python -m dtm_voxelization.export_planes_stl`)
+`surfaces` may be left out entirely: the grid is then exported to SPEED
+without cracks.
 
-Writes one STL per polygon listed in `PLANES` at the top of
-[`export_planes_stl.py`](src/dtm_voxelization/export_planes_stl.py), under
-`output/planes/`. A polygon is just its corner points, in order around the
-boundary; adding a new plane means appending one more entry. Corners given
-as `(x, y)` make a horizontal polygon at the elevation `z` (default 0);
-corners given as `(x, y, z)` are used as-is. Nothing else is read -- the
-DTM plays no part here.
+## Method
 
-## Importing an external surface
+**Grid.** The inner region is split twice (3x3x3, then 3x3x3 again), the
+outer region -- the inner one scaled by `outer_scale` -- once, with the
+conforming wall/corner/concave transition templates of
+[`templates.py`](src/dtm_voxelization/templates.py) around each. The coarse
+cell size starts from a plain-grid estimate and is rescaled by the observed
+carved count until it lands within 30% of `target_cells`.
 
-```bash
-dtm-align-surface
-```
+**Cut.** A grid face belongs to a surface's voxelized image when the segment
+joining the two cells that share it crosses the surface an odd number of
+times. Parity is what makes the result a continuous staircase sheet rather
+than a fuzzy band. Ties -- a surface lying exactly on cell centres, which is
+the normal case for a flat sheet -- are broken by nudging the surface once
+along a direction skew to the grid. Surfaces may be curved, need not be
+aligned with the grid and may end inside it.
 
-`data/xyz/merged.xyz` is not in map coordinates: `to_xyz.py` built it from
-the UTM32N DTM by subtracting the mean of all three coordinate columns, z
-included. A surface built elsewhere therefore has to be translated before
-it can meet the grid --
-[`align_surface.py`](src/dtm_voxelization/align_surface.py) lists each
-external STL with the translation that lands it in this frame and writes
-the aligned copy into `output/planes/`. The untransformed surfaces are
-tracked under `data/surfaces/`, so the pipeline runs on any checkout --
-a cluster, say -- without the folder they were originally built in.
+**Detach.** Each node on a crack gets one copy per group of incident cells
+that can still reach each other without crossing a cut face. The two sides
+of a crack stop sharing points, while a node at a crack tip -- where the
+cells wrap around the end of the surface -- stays one point, so cracks close
+at their tips. All surfaces are split together, so crossing fractures come
+out right. The split fails loudly if cells across a cut face still share a
+node away from a tip. In `detached.vtu`, *Warp By Vector* on `opening` opens
+the cracks.
 
-## Voxelizing a surface onto the grid
-
-```bash
-dtm-cut-surface
-```
-
-(equivalently: `python -m dtm_voxelization.cut_surface`)
-
-Reads the carved grid from `output/cartgrid_carved_refined.vtu` and every
-STL under `output/planes/`, and computes for each one the *voxelized* image
-of the surface on the grid: the set of existing grid faces that the surface
-cuts through, written to `output/cut_faces/` as a quad mesh (`.vtu`, for
-ParaView) and as `face_nodes` / `cell_pairs` arrays (`.npz`, the input to
-the cell-detachment step).
-
-A face is in the cut set when the segment joining the two cells that share
-it crosses the STL an odd number of times. Parity is what makes the result
-a continuous staircase surface instead of a fuzzy band, and it is exactly
-the set of faces where the two cells must stop sharing nodes once the sides
-are detached. The surface may be curved and need not be aligned with the
-grid; it may also terminate inside the grid, in which case the staircase
-simply ends at the tip. See
-[`cut_surface.py`](src/dtm_voxelization/cut_surface.py) for the tie-breaking
-rules that keep the sheet connected when it lies exactly on the cell centres.
-
-## Detaching the two sides
-
-```bash
-dtm-detach-cells
-```
-
-Splits the grid along a cut-face set from `output/cut_faces/`: the cells
-stay exactly where they are, but the two sides stop sharing points, so
-they become logically disconnected. Each crack node is duplicated once per
-group of incident cells that can still reach each other without crossing
-the crack -- which keeps the crack TIP welded, where the cells wrap around
-the end of the surface, instead of tearing the mesh open to the boundary.
-
-The result goes to `output/detached/<name>_detached.vtu` with three fields
-for checking it:
-
-- `side_color` -- the cells around the crack, coloured by what they can
-  still reach through shared nodes (ignoring the tip rim). Two colours
-  that never mix across the surface means the sides really are separated.
-- `crack_side` -- the same cells labelled -1/+1 from the STL geometry, an
-  independent cross-check of the colouring.
-- `opening` -- a point displacement. *Warp By Vector* on it in ParaView
-  opens the crack, which is only possible because its nodes are now
-  distinct points.
-
-See [`detach_cells.py`](src/dtm_voxelization/detach_cells.py) for the
-checks `main` runs on every split.
-
-## Exporting to SPEED
-
-```bash
-dtm-export-speed
-```
-
-Writes each detached grid to `output/speed/<name>.mesh` in the Cubit-style
-ASCII layout SPEED reads, with hexes in VTK/Exodus order and the boundary
-faces as outward-wound quads carrying the labels the `.mate` file refers to:
-`2` lateral and bottom (bounding-box planes), `3` top -- the carved terrain
-and both sides of the detached surface.
-`<name>_boundary.vtu` holds the same quads and tags for ParaView.
+**SPEED.** The `GRIDFILE` layout: nodes, then boundary quads, then hexes,
+1-based. Hexes are in VTK/Exodus order with positive Jacobians and quads are
+wound outward; both are checked before writing. Quad tags, for the `.mate`
+file: `2` lateral and bottom faces (bounding-box planes), `3` everything else
+on the boundary -- the carved terrain and both sides of every crack. Hexes
+carry tag `1`.
 
 ## Running in a container (Apptainer)
 
-Built for clusters where Apptainer is the only container runtime:
+The image carries the dependencies, not the code: `shell.sh` bind-mounts this
+repository at `/workspace`, so edits on the host take effect without a
+rebuild.
 
 ```bash
-source apptainer/build.sh   # -> apptainer/dtm_voxelization.sif
-source apptainer/shell.sh   # a shell inside it, repo at /workspace
+source apptainer/build.sh                      # -> apptainer/dtm_voxelization.sif
+source apptainer/shell.sh                      # a shell inside it, repo at /workspace
+dtm-voxelization cases/rialba.toml             # inside
 ```
 
-Both scripts work either way, sourced or run (`bash apptainer/shell.sh`).
-
-The image carries the dependencies (PoRePy, cloned from GitHub since it is
-not on PyPI, plus numpy/scipy/meshio in a venv at `/opt/venv`); it does NOT
-carry the code. `shell.sh` bind-mounts this repository at `/workspace`, so
-edits on the host take effect with no rebuild, and puts the same console
-scripts on PATH as a local install (`dtm-cut-surface` and friends, with
-`python -m dtm_voxelization.<module>` always available too).
-
-The output folder is separately bindable, for writing results to scratch
-rather than into the repository:
+The output folder is separately bindable, for writing results to scratch:
 
 ```bash
-source apptainer/shell.sh -o /scratch/$USER/run1   # /workspace/output -> there
-source apptainer/shell.sh -- dtm-cut-surface       # run one command and exit
-source apptainer/shell.sh -b /scratch:/scratch     # extra bind, repeatable
-
-export DTM_OUTPUT=/scratch/$USER/run1              # or set it once, then
-source apptainer/shell.sh
+source apptainer/shell.sh -o /scratch/$USER/run1                       # /workspace/output -> there
+source apptainer/shell.sh -- dtm-voxelization cases/rialba.toml speed  # one command and exit
+source apptainer/shell.sh -b /scratch:/scratch                         # extra bind, repeatable
 ```
 
-PoRePy's `@njit(cache=True)` cannot write its cache into a read-only image,
-so the image sets `NUMBA_CACHE_DIR=/tmp/numba_cache`. That is a fresh tmpfs
-each session, meaning numba recompiles those functions on the first import;
-point it at a bind-mounted folder to keep the cache warm:
-
-```bash
-export APPTAINERENV_NUMBA_CACHE_DIR=/workspace/.numba_cache
-source apptainer/shell.sh
-```
-
-`-d` does the same for the input `data/` folder, `-a` (or `$APPTAINER_BIN`)
-picks a specific apptainer executable when it is not on PATH -- it falls back
-to `/opt/mox/apptainer/bin/apptainer`. The container runs with
-`--containall --no-home --writable-tmpfs`, so nothing of the host is visible
-beyond the binds and writes inside the image land in a throwaway overlay:
-results have to go to `/workspace/output` (or another bind) to survive. See
-[`dtm_voxelization.def`](apptainer/dtm_voxelization.def) for the build, and
-the header of [`build.sh`](apptainer/build.sh) for the cluster knobs
-(`APPTAINER_TMPDIR`, `APPTAINER_CACHEDIR`, `--fakeroot`).
+`-d` does the same for `data/`, `-a` (or `$APPTAINER_BIN`) picks the apptainer
+executable, falling back to `/opt/mox/apptainer/bin/apptainer`. The container
+runs with `--containall --no-home --writable-tmpfs`: only the binds are
+visible, and results must land in one of them to survive. See the header of
+[`build.sh`](apptainer/build.sh) for the cluster knobs (`APPTAINER_TMPDIR`,
+`APPTAINER_CACHEDIR`, `--fakeroot`).
 
 ## Data
 
-`data/xyz/merged.xyz` is the raw DTM point cloud (`X Y Z` columns,
-2-line header).
+- `data/xyz/merged.xyz` -- the Rialba DTM point cloud, UTM32N minus its mean
+  (527837.392605, 5082191.470488, 474.976610), z included.
+- `data/surfaces/frattura_verticale_shifted.stl` -- a vertical fracture, x/y
+  already in that frame, z still absolute (hence the case's translation).
 
 ## Issues
 

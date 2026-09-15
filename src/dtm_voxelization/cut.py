@@ -1,20 +1,18 @@
-"""Voxelize an STL surface onto a hex grid: the staircase set of grid
-faces that the surface cuts through.
+"""Voxelize each fracture surface onto the grid: the staircase set of grid
+faces the surface cuts through.
 
-The surface is a triangulated sheet (`output/planes/*.stl`), in general
-neither planar nor aligned with the grid. Its voxelized image here is a
-set of *existing* grid faces -- no cell is cut, no node is moved -- chosen
-so that the face set separates the cells on one side of the sheet from
-the cells on the other.
+The voxelized image is a set of *existing* grid faces -- no cell is cut, no
+node is moved -- chosen so that it separates the cells on one side of the
+sheet from the cells on the other.
 
-Selection rule: a face belongs to the cut set when the segment joining
-the two cells sharing it (its *dual edge*) crosses the STL an ODD number
-of times. Parity is what makes the result a continuous sheet rather than
-a fuzzy band: walk from any cell to any other and the number of cut faces
-you traverse has the same parity as the number of times the path pierces
-the surface, so the cut faces close up into a staircase surface with no
-pinholes. It is also exactly the set the detachment step needs -- each
-cut face is one place where the two cells must stop sharing nodes.
+Selection rule: a face belongs to the cut set when the segment joining the
+two cells sharing it (its *dual edge*) crosses the surface an ODD number of
+times. Parity is what makes the result a continuous sheet rather than a
+fuzzy band: walk from any cell to any other and the number of cut faces you
+traverse has the same parity as the number of times the path pierces the
+surface, so the cut faces close up into a staircase surface with no
+pinholes. It is also exactly the set the detachment step needs -- each cut
+face is one place where the two cells must stop sharing nodes.
 
 Ties are broken consistently. A surface lying exactly on the cell centres
 (a flat sheet on a Cartesian grid is the normal case, not an exotic one)
@@ -27,43 +25,22 @@ counted twice -- is re-thrown with a small random jitter until its parity
 is unambiguous.
 
 Open sheets are fine: the surface may terminate inside the grid, and the
-cut set then simply stops there (the tip is where the staircase ends, not
-a hole). Faces on the grid boundary -- including the ones the terrain
-carving exposed -- have only one owner and no dual edge, so a sheet
-sticking out of the grid contributes nothing there.
+cut set then simply stops there. Faces on the grid boundary -- including
+the ones the terrain carving exposed -- have only one owner and no dual
+edge, so a sheet sticking out of the grid contributes nothing there.
 
-Writes, per input surface, to `output/cut_faces/`:
-
-- `<name>_cut_faces.vtu` -- the staircase surface as quads, carrying the
-  two owner cell ids, for a look in ParaView next to the grid itself;
-- `<name>_cut_faces.npz` -- `face_nodes` (F, 4), `cell_pairs` (F, 2) and
-  `face_centers` (F, 3), the input for the detachment step.
+Writes, per surface, `cut_faces/<name>.npz` (`face_nodes` (F, 4),
+`cell_pairs` (F, 2), in the grid's numbering) and, when not empty,
+`cut_faces/<name>.vtu` for a look in ParaView.
 """
-
-from pathlib import Path
 
 import numpy as np
 import meshio
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-GRID_PATH = REPO_ROOT / "output" / "cartgrid_carved_refined.vtu"
-SURFACE_DIR = REPO_ROOT / "output" / "planes"
-SURFACE_GLOB = "*.stl"
-OUTPUT_DIR = REPO_ROOT / "output" / "cut_faces"
-
-# VTK hexahedron: nodes 0-3 bottom face, 4-7 top face, same rotational order
-HEX_FACES = np.array(
-    [
-        [0, 3, 2, 1],  # bottom
-        [4, 5, 6, 7],  # top
-        [0, 1, 5, 4],
-        [1, 2, 6, 5],
-        [2, 3, 7, 6],
-        [3, 0, 4, 7],
-    ]
-)
+from .mesh import build_face_table, read_hex_mesh, require
+from .surfaces import triangles
 
 MAX_JITTER_RETRIES = 8  # re-throws allowed for an ambiguous dual edge
 TIE_BREAK = 1e-6  # global surface nudge, in units of the local cell size
@@ -71,50 +48,6 @@ TIE_BREAK = 1e-6  # global surface nudge, in units of the local cell size
 # the tie it is there to break
 TIE_BREAK_DIR = np.array([0.3178, 0.4571, 0.8309])
 CHUNK = 2_000_000  # max (segment, triangle) pairs tested at once
-
-
-def build_face_table(hexes):
-    """All distinct faces of a hex mesh.
-
-    Returns (face_nodes, owners): `face_nodes` (F, 4) keeps the winding of
-    the face's first owner, `owners` (F, 2) holds the two cells sharing it
-    (second entry -1 on a boundary face)."""
-    faces = hexes[:, HEX_FACES].reshape(-1, 4)
-    cells = np.repeat(np.arange(len(hexes)), len(HEX_FACES))
-
-    keys = np.sort(faces, axis=1)
-    _, first, inverse, counts = np.unique(
-        keys, axis=0, return_index=True, return_inverse=True, return_counts=True
-    )
-    inverse = inverse.ravel()
-
-    if counts.max() > 2:
-        raise ValueError(
-            f"non-manifold mesh: {int((counts > 2).sum())} faces shared by more "
-            "than two cells"
-        )
-
-    owners = np.full((len(counts), 2), -1, dtype=np.int64)
-    # ordering by (face, cell) puts a face's owners next to each other, the
-    # lower cell id first
-    order = np.lexsort((cells, inverse))
-    face_sorted, cell_sorted = inverse[order], cells[order]
-    slot = np.zeros(len(face_sorted), dtype=int)
-    slot[1:] = face_sorted[1:] == face_sorted[:-1]
-    owners[face_sorted, slot] = cell_sorted
-
-    return faces[first], owners
-
-
-def read_surface_triangles(stl_path):
-    """STL -> (T, 3, 3) array of triangle vertices."""
-    mesh = meshio.read(str(stl_path))
-    triangles = np.vstack(
-        [block.data for block in mesh.cells if block.type == "triangle"]
-    )
-    if len(triangles) == 0:
-        raise ValueError(f"{stl_path}: no triangles")
-    return mesh.points[triangles].astype(float)
 
 
 def count_crossings(seg_start, seg_end, tri, eps=1e-9, ambiguity_tol=1e-7):
@@ -194,8 +127,8 @@ def crossings_with_jitter(seg_start, seg_end, tri, rng, max_retries=MAX_JITTER_R
 def voxelize_surface(points, hexes, tri, face_table=None, seed=0, tie_break=TIE_BREAK):
     """Grid faces whose dual edge crosses the surface an odd number of times.
 
-    Returns a dict with `face_nodes` (F, 4), `cell_pairs` (F, 2),
-    `face_centers` (F, 3) and the number of candidates actually tested."""
+    Returns a dict with `face_nodes` (F, 4), `cell_pairs` (F, 2) and the
+    number of candidates actually tested."""
     face_nodes, owners = face_table if face_table is not None else build_face_table(hexes)
     internal = owners[:, 1] >= 0
     int_faces, int_owners = face_nodes[internal], owners[internal]
@@ -213,12 +146,7 @@ def voxelize_surface(points, hexes, tri, face_table=None, seed=0, tie_break=TIE_
     candidate = np.all((hi >= tri_lo) & (lo <= tri_hi), axis=1)
     cand_idx = np.flatnonzero(candidate)
     if len(cand_idx) == 0:
-        return dict(
-            face_nodes=int_faces[:0],
-            cell_pairs=int_owners[:0],
-            face_centers=centers[:0],
-            n_candidates=0,
-        )
+        return dict(face_nodes=int_faces[:0], cell_pairs=int_owners[:0], n_candidates=0)
 
     # one global tie-break: cell centres sitting exactly on the surface are
     # the rule for flat sheets on a Cartesian grid, and every such probe has
@@ -237,7 +165,6 @@ def voxelize_surface(points, hexes, tri, face_table=None, seed=0, tie_break=TIE_
     return dict(
         face_nodes=int_faces[cut],
         cell_pairs=int_owners[cut],
-        face_centers=points[int_faces[cut]].mean(axis=1),
         n_candidates=len(cand_idx),
     )
 
@@ -295,42 +222,41 @@ def explain_empty_cut(points, hexes, tri):
     )
 
 
-def main():
-    print(f"reading grid {GRID_PATH}", flush=True)
-    grid = meshio.read(str(GRID_PATH))
-    points = grid.points.astype(float)
-    hexes = np.vstack(
-        [block.data for block in grid.cells if block.type == "hexahedron"]
-    )
-    print(f"  {len(hexes):,} hexes, {len(points):,} points", flush=True)
+def run(case):
+    """Voxelize every surface of the case onto grid.vtu -> cut_faces/<name>.npz."""
+    if not case.surfaces:
+        print("  no surfaces in the case", flush=True)
+        return
+    require(case.grid_path, "grid")
+    points, hexes = read_hex_mesh(case.grid_path)
+    print(f"  grid {case.grid_path}: {len(hexes):,} hexes, {len(points):,} points", flush=True)
 
     face_table = build_face_table(hexes)
     n_internal = int((face_table[1][:, 1] >= 0).sum())
     print(f"  {len(face_table[0]):,} faces ({n_internal:,} internal)", flush=True)
 
-    surfaces = sorted(SURFACE_DIR.glob(SURFACE_GLOB))
-    if not surfaces:
-        raise SystemExit(f"no surfaces matching {SURFACE_GLOB} in {SURFACE_DIR}")
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for stl_path in surfaces:
-        tri = read_surface_triangles(stl_path)
-        print(f"\n{stl_path.name}: {len(tri)} triangles", flush=True)
+    case.cut_dir.mkdir(parents=True, exist_ok=True)
+    for surface in case.surfaces:
+        tri = triangles(surface)
+        print(f"\n  {surface.name}: {len(tri)} triangles", flush=True)
         cut = voxelize_surface(points, hexes, tri, face_table=face_table)
         face_nodes, cell_pairs = cut["face_nodes"], cut["cell_pairs"]
         print(
-            f"  {cut['n_candidates']:,} dual edges tested -> "
+            f"    {cut['n_candidates']:,} dual edges tested -> "
             f"{len(face_nodes):,} cut faces, "
             f"{len(np.unique(cell_pairs)):,} cells touched, "
             f"{count_connected_faces(face_nodes)} connected component(s)",
             flush=True,
         )
+
+        npz_path = case.cut_dir / f"{surface.name}.npz"
+        np.savez(npz_path, face_nodes=face_nodes, cell_pairs=cell_pairs)
+        print(f"    wrote {npz_path}", flush=True)
         if len(face_nodes) == 0:
-            print(f"  no faces cut: {explain_empty_cut(points, hexes, tri)}", flush=True)
+            print(f"    no faces cut: {explain_empty_cut(points, hexes, tri)}", flush=True)
             continue
 
-        stem = stl_path.stem
-        vtu_path = OUTPUT_DIR / f"{stem}_cut_faces.vtu"
+        vtu_path = case.cut_dir / f"{surface.name}.vtu"
         meshio.write_points_cells(
             vtu_path,
             points,
@@ -340,15 +266,4 @@ def main():
                 "cell_right": [cell_pairs[:, 1].astype(float)],
             },
         )
-        npz_path = OUTPUT_DIR / f"{stem}_cut_faces.npz"
-        np.savez(
-            npz_path,
-            face_nodes=face_nodes,
-            cell_pairs=cell_pairs,
-            face_centers=cut["face_centers"],
-        )
-        print(f"  wrote {vtu_path}\n  wrote {npz_path}", flush=True)
-
-
-if __name__ == "__main__":
-    main()
+        print(f"    wrote {vtu_path}", flush=True)

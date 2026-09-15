@@ -1,4 +1,4 @@
-"""Minimal DTM I/O for build_cartgrid_carved.py: a coarse resampled
+"""Minimal DTM I/O for grid.py: a coarse resampled
 analysis grid (domain extent + elevation, for sizing the Cartesian grid)
 and a full-resolution scattered-point interpolator (for querying exact
 terrain elevation while carving)."""

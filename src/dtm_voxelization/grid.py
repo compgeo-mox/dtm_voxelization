@@ -1,75 +1,60 @@
-"""Like build_cartgrid_carved.py, but with two NESTED regions locally
-refined -- 3x3x3 hex split plus the wall/corner/concave transition layers
-from general_rebuild.py's template scheme -- before the terrain carving.
+"""Refined, terrain-carved hex grid of a DTM.
 
-The inner region (INNER_X/Y_MIN/MAX) gets a DOUBLE refinement (level 1,
-then a further nested level-2 split inside it); the outer region is that
-same rectangle scaled by OUTER_SCALE in x, y AND z, same center, and gets
-only the level-1 split -- it exists to give the inner region's level-2
-split the buffer ring of level-1 'urz' cells it needs (see
+A Cartesian grid over the DTM's extent with two NESTED regions locally
+refined -- 3x3x3 hex split plus the wall/corner/concave transition layers
+from general_rebuild.py's template scheme -- then carved: every hex entirely
+above the terrain is dropped.
+
+The inner region (the case's `inner_region`) gets a DOUBLE refinement (level
+1, then a further nested level-2 split inside it); the outer region is that
+same rectangle scaled by `outer_scale` in x, y AND z, same center, and gets
+only the level-1 split -- it exists to give the inner region's level-2 split
+the buffer ring of level-1 'urz' cells it needs (see
 general_rebuild.refine_region_further's docstring).
 
-Unlike the plain CartGrid pipeline, the refinement templates require an
-ISOTROPIC x/y cell size (only z may differ, see templates.apply_matrix's
-docstring), so NX/NY/h_xy are locked together here instead of chosen
-independently -- the domain's x/y extent is padded out to an exact
-multiple of h_xy to make that possible.
+The refinement templates require an ISOTROPIC x/y cell size (only z may
+differ, see templates.apply_matrix's docstring), so NX/NY/h_xy are locked
+together -- the domain's x/y extent is padded out to an exact multiple of
+h_xy to make that possible.
 
-TARGET_TOTAL_CELLS sizing: build_cartgrid_carved.py's own cell_edge
-formula assumes a PLAIN grid (1 hex/cell); refinement replaces cells with
-27/13/5-hex templates, so that formula alone underestimates the final
-count once the two nested regions are added. Rather than modeling that
-inflation analytically (it depends on how many coarse cells the fixed
-physical regions cover, which itself depends on the cell size being
-solved for), `main` just measures it directly: build+carve once with the
-plain-grid estimate, then rescale cell_edge by the observed ratio to
-target and rebuild -- reusing the exact same build/carve code each time.
-
-The refined mesh is a plain (points, hexes, tags) hex soup (general_rebuild's
-own output), not a PorePy grid, so carving and export are done directly
-here instead of via pp.CartGrid/pp.partition.extract_subgrid.
+Sizing to `target_cells`: the plain-grid cell_edge formula assumes 1 hex per
+cell; refinement replaces cells with 27/13/5-hex templates, so it
+underestimates the final count once the nested regions are added. Rather
+than modeling that inflation analytically (it depends on how many coarse
+cells the fixed physical regions cover, which itself depends on the cell
+size being solved for), `run` measures it: build+carve once with the
+plain-grid estimate, then rescale cell_edge by the observed ratio to target
+and rebuild -- reusing the exact same build/carve code each time.
 """
 
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import meshio
 
-# lets this file also run directly (`python build_cartgrid_carved_refined.py`),
-# not just as part of the installed dtm_voxelization package
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from dtm_voxelization.dtm_io import (
+from . import general_rebuild as GR
+from .dtm_io import (
     interpolate_in_parallel,
     load_dtm_analysis_grid,
     load_dtm_interpolator,
 )
-from dtm_voxelization.build_cartgrid_carved import (
-    TARGET_TOTAL_CELLS,
-    estimate_kept_fraction,
-)
-from dtm_voxelization import general_rebuild as GR
-from dtm_voxelization.geometry_checks import check_conformity_3d
+from .geometry_checks import check_conformity_3d
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-XYZ_PATH = REPO_ROOT / "data" / "xyz" / "merged.xyz"
-OUTPUT_DIR = REPO_ROOT / "output"
+FRACTION_SAMPLE_N = 400  # resolution of the coarse pre-sample used only to size the grid
+SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
+MAX_ITERATIONS = 3
 
-# inner (finest) region, hand-picked physical (x, y) rectangle (from the
-# DTM slope map's layer-3 nested refinement, test_gridding/files/manual_regions.py)
-INNER_XMIN, INNER_XMAX = -260.0, -10.0
-INNER_YMIN, INNER_YMAX = 175.0, 425.0
-REGION_Z_PAD = (
-    20.0  # extra clearance above/below the DTM surface within the inner region
-)
 
-OUTER_SCALE = 1.5  # outer (level-1) region = inner region scaled by this in x, y, AND z, same center
-SIZE_TOLERANCE = (
-    0.3  # accept the first cell_edge landing within +/-30% of target_total_cells
-)
+def estimate_kept_fraction(
+    dtm_interp, xmin, xmax, ymin, ymax, zmin, lz, n=FRACTION_SAMPLE_N
+):
+    """Fraction of the domain box below the terrain, from a coarse sample."""
+    xs = xmin + (np.arange(n) + 0.5) * (xmax - xmin) / n
+    ys = ymin + (np.arange(n) + 0.5) * (ymax - ymin) / n
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    terrain = dtm_interp(np.column_stack([xx.ravel(), yy.ravel()])).reshape(n, n)
+    frac = np.clip((terrain - zmin) / lz, 0, 1)
+    return float(np.mean(frac))
 
 
 def footprint_from_region(xmin, ymin, hx, hy, nx, ny, rxmin, rxmax, rymin, rymax):
@@ -156,7 +141,7 @@ def build_double_refined_grid(
 
     general_rebuild's point-dedup rounds position/cell_size to 5 decimal
     places (see build_mesh's gid() docstring) -- fine for the small,
-    origin-relative offsets its own tests use, but this DTM's real
+    origin-relative offsets its own tests use, but a real DTM's
     XMIN/YMIN/ZMIN are large, mutually different, non-round numbers, and
     an unlucky combination can land a legitimate shared point right on a
     rounding-tie boundary, splitting it into two near-duplicates (a real,
@@ -285,8 +270,7 @@ def build_double_refined_grid(
         flush=True,
     )
 
-    # carve: drop every hex entirely above the terrain at its own (x,y)
-    # centroid -- same rule as build_cartgrid_carved.py's `keep`.
+    # carve: drop every hex entirely above the terrain at its own (x,y) centroid
     coords = points[hexes]  # (n_hex, 8, 3)
     print(
         f"[carve] corner coordinates ready in {time.perf_counter() - carve_t0:.1f}s; "
@@ -329,21 +313,17 @@ def build_double_refined_grid(
     return points, hexes, tags, keep, grid_info
 
 
-def main(
-    target_total_cells=TARGET_TOTAL_CELLS,
-    outer_scale=OUTER_SCALE,
-    max_iterations=3,
-    validate_mesh=False,
-):
-    dtm = load_dtm_analysis_grid(XYZ_PATH)
+def run(case):
+    """Build the refined carved grid of the case's DTM -> grid.vtu, dtm_surface.stl."""
+    dtm = load_dtm_analysis_grid(case.dtm)
     XMIN, YMIN = dtm["xmin"], dtm["ymin"]
-    ZMIN = float(np.nanmin(dtm["Z"])) - 50.0
-    ZMAX = float(np.nanmax(dtm["Z"])) + 50.0
+    ZMIN = float(np.nanmin(dtm["Z"])) - case.z_padding
+    ZMAX = float(np.nanmax(dtm["Z"])) + case.z_padding
     Lz = ZMAX - ZMIN
     Lx_dtm = dtm["xmax"] - XMIN
     Ly_dtm = dtm["ymax"] - YMIN
 
-    dtm_interp = load_dtm_interpolator(XYZ_PATH)
+    dtm_interp = load_dtm_interpolator(case.dtm)
     kept_fraction = estimate_kept_fraction(
         dtm_interp, XMIN, dtm["xmax"], YMIN, dtm["ymax"], ZMIN, Lz
     )
@@ -351,28 +331,29 @@ def main(
 
     # the two nested regions' physical bounds don't depend on grid
     # resolution -- computed once, outside the cell_edge calibration loop.
+    inner_xmin, inner_xmax, inner_ymin, inner_ymax = case.inner_region
     inner_zbot, inner_ztop = z_extent_from_region(
-        dtm_interp, INNER_XMIN, INNER_XMAX, INNER_YMIN, INNER_YMAX, REGION_Z_PAD
+        dtm_interp, inner_xmin, inner_xmax, inner_ymin, inner_ymax, case.region_z_padding
     )
     inner_bounds = (
-        INNER_XMIN,
-        INNER_XMAX,
-        INNER_YMIN,
-        INNER_YMAX,
+        inner_xmin,
+        inner_xmax,
+        inner_ymin,
+        inner_ymax,
         inner_zbot,
         inner_ztop,
     )
     outer_bounds = (
-        *scale_interval(INNER_XMIN, INNER_XMAX, outer_scale),
-        *scale_interval(INNER_YMIN, INNER_YMAX, outer_scale),
-        *scale_interval(inner_zbot, inner_ztop, outer_scale),
+        *scale_interval(inner_xmin, inner_xmax, case.outer_scale),
+        *scale_interval(inner_ymin, inner_ymax, case.outer_scale),
+        *scale_interval(inner_zbot, inner_ztop, case.outer_scale),
     )
     print(
-        f"inner region: x=[{INNER_XMIN:.1f},{INNER_XMAX:.1f}] "
-        f"y=[{INNER_YMIN:.1f},{INNER_YMAX:.1f}] z=[{inner_zbot:.1f},{inner_ztop:.1f}]"
+        f"inner region: x=[{inner_xmin:.1f},{inner_xmax:.1f}] "
+        f"y=[{inner_ymin:.1f},{inner_ymax:.1f}] z=[{inner_zbot:.1f},{inner_ztop:.1f}]"
     )
     print(
-        f"outer region ({outer_scale}x, same center): "
+        f"outer region ({case.outer_scale}x, same center): "
         f"x=[{outer_bounds[0]:.1f},{outer_bounds[1]:.1f}] "
         f"y=[{outer_bounds[2]:.1f},{outer_bounds[3]:.1f}] "
         f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]"
@@ -380,10 +361,10 @@ def main(
 
     # plain-grid estimate (ignores refinement inflation), then calibrated
     # against the actual built+carved cell count below.
-    cell_edge = (Lx_dtm * Ly_dtm * Lz * kept_fraction / target_total_cells) ** (
+    cell_edge = (Lx_dtm * Ly_dtm * Lz * kept_fraction / case.target_cells) ** (
         1.0 / 3.0
     )
-    for iteration in range(max_iterations):
+    for iteration in range(MAX_ITERATIONS):
         points, hexes, tags, keep, grid = build_double_refined_grid(
             cell_edge,
             XMIN,
@@ -395,24 +376,24 @@ def main(
             inner_bounds,
             outer_bounds,
             dtm_interp,
-            validate_mesh=validate_mesh,
+            validate_mesh=case.validate_mesh,
         )
         n_kept = int(keep.sum())
-        ratio = n_kept / target_total_cells
+        ratio = n_kept / case.target_cells
         print(
             f"[iter {iteration}] cell_edge={cell_edge:.3f} -> grid "
             f"{grid['NX']}x{grid['NY']}x{grid['NZ']}, level 1 "
             f"{grid['n_footprint1']} cells / level 2 {grid['n_footprint2']} cells, "
-            f"{len(hexes):,} hexes, {n_kept:,} kept (target {target_total_cells:,}, "
+            f"{len(hexes):,} hexes, {n_kept:,} kept (target {case.target_cells:,}, "
             f"ratio {ratio:.2f})"
         )
-        if abs(ratio - 1.0) <= SIZE_TOLERANCE or iteration == max_iterations - 1:
+        if abs(ratio - 1.0) <= SIZE_TOLERANCE or iteration == MAX_ITERATIONS - 1:
             break
         cell_edge *= ratio ** (
             1.0 / 3.0
         )  # refinement inflates cell count beyond the plain-grid estimate
 
-    if validate_mesh:
+    if case.validate_mesh:
         print(f"level 1 conformity check: {grid['detail1']}")
         print("level 2 (combined) conformity check: PASS")
     else:
@@ -423,17 +404,12 @@ def main(
     kind_names = sorted(set(kind_str))
     kind_code = np.array([kind_names.index(k) for k in kind_str], dtype=float)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    export_dtm_surface(dtm, OUTPUT_DIR / "dtm_surface.stl")
-    out_path = OUTPUT_DIR / "cartgrid_carved_refined.vtu"
+    case.output.mkdir(parents=True, exist_ok=True)
+    export_dtm_surface(dtm, case.dtm_surface_path)
     meshio.write_points_cells(
-        out_path,
+        case.grid_path,
         points,
         [("hexahedron", kept_hexes)],
         cell_data={"kind_code": [kind_code]},
     )
-    print(f"wrote {out_path} -- kind_code legend: {list(enumerate(kind_names))}")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"wrote {case.grid_path} -- kind_code legend: {list(enumerate(kind_names))}")
