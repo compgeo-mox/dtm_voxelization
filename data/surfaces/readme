@@ -1,0 +1,6 @@
+consider the first plane in the file first_fracture.txt, I need to apply a negative shift given by the average of the original cloud point which is:
+M = [5.27837393e+05, 5.08219147e+06, 4.74976610e+02]
+and the shift of the software given by S = [-527000, -5082000, 0]
+
+So to transform the point from the file to the points useful in the computation we should apply the current shift
+P_new = P_old - (M - S)
