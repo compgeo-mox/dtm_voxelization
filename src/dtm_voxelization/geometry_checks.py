@@ -152,7 +152,8 @@ def hex_volumes_signed(points, hexes):
     return vol
 
 
-def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1e-6):
+def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1e-6,
+                         volume_offset=0.0):
     """3D analogue of check_conformity, for the hex mesh extrude3d.py
     produces: every hex has 8 distinct vertices and strictly positive
     volume, every internal face shared by exactly 2 hexes, every
@@ -169,6 +170,14 @@ def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1
     tractable at real mesh sizes (can be millions of hexes), where
     coordinate-rounding and dict-keying every face by its rounded
     coordinates would be far slower.
+
+    `volume_offset`: how much the mesh's total volume is EXPECTED to differ
+    from the domain box -- the concave mega-blocks interlock and each leaves a
+    known deficit (templates.CONCAVE_VOLUME_DEFICIT, in units of its own cell
+    volume), so a mesh with reentrant corners in its footprint never matches the
+    box exactly and would otherwise be reported as broken. Callers that place
+    concave blocks pass the sum here; general_rebuild.verify_mesh does the same
+    accounting for single-scale meshes.
 
     `tol` is used both for the boundary-box membership test (absolute,
     in the same units as the coordinates) and, scaled by the domain's
@@ -237,7 +246,7 @@ def check_conformity_3d(points, hexes, xmin, xmax, ymin, ymax, zmin, zmax, tol=1
         flush=True,
     )
 
-    expected_volume = (xmax - xmin) * (ymax - ymin) * (zmax - zmin)
+    expected_volume = (xmax - xmin) * (ymax - ymin) * (zmax - zmin) + volume_offset
     total_volume = float(vols.sum())
     volume_tol = max(tol, 1e-9 * abs(expected_volume))
 

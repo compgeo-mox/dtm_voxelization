@@ -42,7 +42,7 @@ def main(argv=None):
           + (f", voxel {case.voxel_size}, depth {case.poisson_depth}" if case.surface == "poisson" else ""))
     print(f"  output  {case.output}")
     print(
-        f"  grid    target {case.target_cells:,} cells, inner region {case.inner_region}, "
+        f"  grid    target {case.target_cells:,} cells, inner regions {case.inner_regions}, "
         f"outer scale {case.outer_scale}, z padding {case.z_padding} / "
         f"{case.region_z_padding}, validate_mesh={case.validate_mesh}"
     )

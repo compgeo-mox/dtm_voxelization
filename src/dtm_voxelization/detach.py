@@ -38,6 +38,7 @@ import meshio
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
+from .geometry_checks import hex_volumes_signed
 from .mesh import build_face_table, read_hex_mesh, require
 
 OPENING = 0.35  # warp amplitude, as a fraction of the local cut-face size
@@ -278,7 +279,11 @@ def run(case):
         case.detached_path,
         new_points,
         [("hexahedron", new_hexes)],
-        cell_data={"crack_cell": [crack_cell], "side_color": [side_color]},
+        cell_data={
+            "crack_cell": [crack_cell],
+            "side_color": [side_color],
+            "volume": [np.abs(hex_volumes_signed(new_points, new_hexes))],
+        },
         point_data={"opening": opening},
     )
     print(f"  wrote {case.detached_path}", flush=True)

@@ -16,7 +16,7 @@ poisson_depth = 10               # octree depth of the reconstruction
 [grid]
 target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 30.0                 # rock behind the wall below its deepest point, air above
-inner_region = [-27.0, 27.0, -26.0, -10.0]   # level-2 rectangle, over the main re-entrance
+inner_regions = [[-27.0, 27.0, -26.0, -10.0]]   # level-2 rectangle, over the main re-entrance
 region_z_padding = 5.0           # clearance around the wall inside it
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
                                  # never less than 1.5 coarse cells wider in x and y

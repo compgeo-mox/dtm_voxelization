@@ -334,6 +334,29 @@ def classify_footprint(footprint, ni_range, nj_range):
                 uf, arms = T._union_faces_and_arms((i, j), footprint)
                 if frozenset(uf) not in T.CONCAVE:
                     raise ValueError(f"cell {(i,j)}: no concave template for uf={uf}")
+                # The arms found geometrically here (neighbors that touch the
+                # footprint themselves) must be the very cells build_mesh will
+                # cover with the template's own arm blocks, at its fixed
+                # offsets. They differ when the footprint's boundary turns
+                # again right beside the notch -- a run of only ONE cell past
+                # the corner -- and then the cell build_mesh treats as an arm
+                # is left unclaimed here, gets classified as a plain corner or
+                # coarse cell in pass 2, and ends up holding TWO overlapping
+                # blocks: 24 faces shared by 3 hexes and 420 hanging nodes on
+                # a real DTM grid, silently. The fix is the caller's: give the
+                # footprint at least 2 cells of run on both sides of the notch.
+                template_arms = {
+                    (i + arm["offset"][0], j + arm["offset"][1])
+                    for arm in T.CONCAVE[frozenset(uf)]["arms"]
+                }
+                if set(arms) != template_arms:
+                    raise ValueError(
+                        f"cell {(i,j)}: reentrant corner with uf={uf} whose arms "
+                        f"{sorted(template_arms)} are not all against the footprint "
+                        f"(touching arms are {sorted(arms)}) -- the footprint runs only "
+                        f"1 cell past this notch, which the concave template cannot "
+                        f"transition; it needs at least 2 on both sides."
+                    )
                 concave_corners.append(((i, j), uf, arms))
 
     for (i, j), uf, arms in concave_corners:

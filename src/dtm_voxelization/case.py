@@ -34,7 +34,7 @@ class Case:
     poisson_depth: int | None  # poisson only
     target_cells: int
     z_padding: float
-    inner_region: tuple  # xmin, xmax, ymin, ymax
+    inner_regions: tuple  # one or more (xmin, xmax, ymin, ymax) rectangles
     region_z_padding: float
     outer_scale: float
     validate_mesh: bool
@@ -106,14 +106,17 @@ def load_case(path):
     grid_keys = {
         "target_cells",
         "z_padding",
-        "inner_region",
+        "inner_regions",
         "region_z_padding",
         "outer_scale",
         "validate_mesh",
     }
     _check_keys(grid, grid_keys, set(), f"{path.name} [grid]")
-    if len(grid["inner_region"]) != 4:
-        raise ValueError(f"{path.name} [grid]: inner_region is [xmin, xmax, ymin, ymax]")
+    regions = grid["inner_regions"]
+    if not regions or any(len(r) != 4 for r in regions):
+        raise ValueError(
+            f"{path.name} [grid]: inner_regions is a list of [xmin, xmax, ymin, ymax]"
+        )
 
     surfaces = []
     for i, entry in enumerate(data.get("surfaces", [])):
@@ -149,7 +152,7 @@ def load_case(path):
         poisson_depth=int(dtm["poisson_depth"]) if "poisson_depth" in dtm else None,
         target_cells=int(grid["target_cells"]),
         z_padding=float(grid["z_padding"]),
-        inner_region=tuple(float(v) for v in grid["inner_region"]),
+        inner_regions=tuple(tuple(float(v) for v in r) for r in regions),
         region_z_padding=float(grid["region_z_padding"]),
         outer_scale=float(grid["outer_scale"]),
         validate_mesh=bool(grid["validate_mesh"]),
