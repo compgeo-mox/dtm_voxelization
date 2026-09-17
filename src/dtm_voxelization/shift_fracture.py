@@ -27,7 +27,9 @@ def triangulate(pts):
 
 
 if __name__ == "__main__":
-    folder = Path(__file__).parent
+    # the corner files live in the repo's data folder: src/dtm_voxelization -> repo root
+    folder = Path(__file__).resolve().parents[2] / "data" / "surfaces"
+    print(f"reading corner files from {folder}")
     for name in [
         "first_fracture",
         "second_fracture",
