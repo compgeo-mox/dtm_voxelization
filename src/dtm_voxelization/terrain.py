@@ -78,8 +78,20 @@ def footprint_rectangle(xy):
     return rect
 
 
-def export_triangles(path, points, triangles):
-    """Binary STL: an ASCII one of a Poisson mesh runs to hundreds of MB."""
+def export_triangles(path, points, triangles, keep=None):
+    """Binary STL: an ASCII one of a Poisson mesh runs to hundreds of MB.
+    `keep`, a mask over the triangles, writes only those and their points.
+    Zero-area triangles, which a Poisson mesh has a few of, are dropped: their
+    normal would be written as NaN."""
+    corners = points[triangles]
+    area2 = np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+    degenerate = area2 == 0
+    if degenerate.any():
+        print(f"  dropping {int(degenerate.sum()):,} zero-area triangles", flush=True)
+        keep = ~degenerate if keep is None else keep & ~degenerate
+    if keep is not None:
+        used, compact = np.unique(triangles[keep], return_inverse=True)
+        points, triangles = points[used], compact.reshape(-1, 3)
     meshio.write_points_cells(path, points, [("triangle", triangles)], binary=True)
     print(f"wrote {path} -- {len(points):,} points, {len(triangles):,} triangles", flush=True)
 
@@ -251,13 +263,12 @@ class PoissonSurface:
             & (centroids[:, 1] >= self.ymin)
             & (centroids[:, 1] <= self.ymax)
         )
-        used, compact = np.unique(self.triangles[inside], return_inverse=True)
         print(
             f"  surface over the domain rectangle: {int(inside.sum()):,} of "
             f"{len(self.triangles):,} triangles",
             flush=True,
         )
-        export_triangles(path, self.vertices[used], compact.reshape(-1, 3))
+        export_triangles(path, self.vertices, self.triangles, keep=inside)
 
 
 def build(case):
@@ -266,7 +277,12 @@ def build(case):
         return HeightField(case.points, case.trim_to_footprint), np.eye(3), np.zeros(3)
 
     x, y, z = _load_xyz(case.points)
-    points = np.column_stack([x, y, z])
+    return poisson_surface(np.column_stack([x, y, z]), case)
+
+
+def poisson_surface(points, case):
+    """(surface, rotation, center): the case's Poisson reconstruction of the
+    points, in the frame where their least-squares plane is horizontal."""
     rotation, center = frame.compute(points, case.outward)
     print(
         f"  frame: {'identity' if frame.is_identity(rotation, center) else 'least-squares plane'}, "

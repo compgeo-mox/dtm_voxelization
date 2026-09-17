@@ -25,11 +25,12 @@ Python >= 3.11, with numpy, scipy and meshio:
 pip install -e .
 ```
 
-Cases with `surface = "poisson"` also need Open3D, which ships wheels up to
-Python 3.12:
+Cases with `surface = "poisson"` also need Open3D, and turning a LAS point
+cloud into the inputs below needs laspy and VTK:
 
 ```bash
 pip install -e ".[poisson]"
+pip install -e ".[las]"
 ```
 
 ## Usage
@@ -42,6 +43,21 @@ python -m dtm_voxelization cases/rialba.toml cut detach speed  # only these
 (`dtm-voxelization` once installed.) Steps always run in pipeline order,
 whatever order they are given in. Rerunning only the later ones is the usual
 way to change the surfaces without rebuilding a large grid.
+
+A LAS point cloud becomes a case's `points` file, plus two files for
+ParaView, all written next to it:
+
+```bash
+python -m dtm_voxelization.las_export path/to/cloud.las cases/san_martino.toml   # cloud.xyz, .vtp, .stl
+```
+
+All three are in the cases' frame: x/y centred on the cloud's mean (rounded
+to 1 mm, logged and written in the `.xyz` comment line), z elevation. The
+`.vtp` holds every point in binary -- open it rather than the `.xyz`, whose
+size ParaView's CSV reader does not survive. The `.stl` is the surface the
+given `poisson` case would reconstruct from the cloud, with its `outward`,
+`voxel_size` and `poisson_depth`, cut down to the triangles within two octree
+cells of a point.
 
 ## A case
 
@@ -62,8 +78,11 @@ trim_to_footprint = false           # the points cover the whole rectangle
 [grid]
 target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
-inner_region = [-260.0, -10.0, 175.0, 425.0]   # level-2 rectangle: xmin, xmax, ymin, ymax
-region_z_padding = 20.0          # clearance above and below the terrain inside it
+inner_regions = [                # level-2 rectangles: xmin, xmax, ymin, ymax
+    [-260.0, -110.0, 175.0, 270.0],
+    [-200.0,  -60.0, 240.0, 360.0],
+]
+region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
                                  # never less than 1.5 coarse cells wider in x and y
 validate_mesh = false            # exhaustive conformity checks, slow on large grids
@@ -88,13 +107,13 @@ takes a reconstructed surface instead:
 [dtm]
 points = "../data/xyz/san_martino.xyz"
 surface = "poisson"              # a 3D surface reconstructed from the points
-outward = [0.0, -1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
+outward = [0.0, 1.0, 0.0]        # rotate the least-squares plane horizontal, out of the rock up
 trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
 voxel_size = 0.25                # down-sampling before the reconstruction
 poisson_depth = 10               # octree depth of the reconstruction
 ```
 
-With `outward` the grid is built in the rotated frame, so `inner_region` is
+With `outward` the grid is built in the rotated frame, so `inner_regions` are
 given in that frame too: the `grid` step logs the domain rectangle it builds.
 Fracture surfaces stay in the DTM's own frame and are rotated for you.
 
@@ -118,8 +137,8 @@ this is the same rule. With `outward`, all of it happens in the frame where
 the points' total least-squares plane is horizontal; the rotation is saved
 in `frame.npz`.
 
-**Grid.** The inner region is split twice (3x3x3, then 3x3x3 again), the
-outer region -- the inner one scaled by `outer_scale`, and in x/y at least 1.5
+**Grid.** The inner regions are split twice (3x3x3, then 3x3x3 again), the
+outer region -- their bounding box scaled by `outer_scale`, and in x/y at least 1.5
 coarse cells wider on every side, which the second split's buffer needs -- once, with the
 conforming wall/corner/concave transition templates of
 [`templates.py`](src/dtm_voxelization/templates.py) around each. The coarse
@@ -128,6 +147,16 @@ carved count -- coarse cells plus the hexes each refined level adds, weighted
 by the rock fraction of its region -- so that even the first build is near
 `target_cells`; builds then rescale it by the observed carved count until it
 lands within 30%. The log reports the peak memory after each stage.
+
+Each inner region takes its own z range from the terrain over its own
+rectangle, so a slope needs no single box tall enough for all of it.
+Regions at different depths are refined by separate calls, which must stay 3
+cells of the first split apart -- one coarse cell -- since a column can take
+only one transition role over its whole height. Closer ones, intersecting
+ones included, are merged into one call over the union of their footprints,
+as deep as the deepest; the log says when. Where that union's outline steps,
+it must step by at least 2 cells: a reentrant corner with a single cell of
+run past it has no transition template, and the build refuses it.
 
 **Cut.** A grid face belongs to a surface's voxelized image when the segment
 joining the two cells that share it crosses the surface an odd number of

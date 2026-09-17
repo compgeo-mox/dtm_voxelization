@@ -17,6 +17,17 @@ def _load_xyz(file_path):
     return data[:, x_col], data[:, y_col], data[:, z_col]
 
 
+def save_xyz(file_path, points, comment):
+    """The format _load_xyz reads: point count, a comment line, then
+    `1 x y z` per point, at 1 mm."""
+    t0 = time.time()
+    np.savetxt(
+        file_path, points, fmt="1 %.3f %.3f %.3f",
+        header=f"{len(points)}\n{comment}", comments="",
+    )
+    print(f"  [savetxt] {time.time() - t0:.2f}s  {file_path}")
+
+
 def load_dtm_analysis_grid(xyz_path, max_grid_points=300):
     """Resampled analysis grid: a coarse regular (x, y) grid with
     interpolated elevation, plus the DTM's own (x, y) extent. Coarse by

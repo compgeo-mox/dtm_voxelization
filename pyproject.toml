@@ -17,8 +17,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# surface = "poisson" in a case; Open3D ships wheels up to Python 3.12
+# surface = "poisson" in a case
 poisson = ["open3d-cpu"]
+# python -m dtm_voxelization.las_export
+las = ["laspy", "vtk"]
 
 [project.urls]
 Repository = "https://github.com/compgeo-mox/dtm_voxelization"
