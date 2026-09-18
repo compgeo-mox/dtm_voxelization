@@ -11,9 +11,12 @@ written in the .xyz comment line, to add it back for UTM.
 - .vtp: every point, binary. A text cloud this size is no good in ParaView,
   whose CSV reader parses each field as a string and runs out of memory.
 - .stl: the surface a `poisson` case reconstructs from these points, with the
-  case's `outward`, `voxel_size` and `poisson_depth`. Away from the data the
-  reconstruction closes itself with surfaces of no meaning, so only triangles
-  within two octree cells of a point are kept.
+  case's `outward`, `voxel_size` and `poisson_depth`, tidied up by clean_stl.
+  The reconstruction is closed, and away from the data it closes itself with
+  surfaces of no meaning, so only the triangles within MAX_GAP of a point are
+  kept -- which is the same thing as deciding how wide a gap in the cloud the
+  reconstruction is allowed to bridge on its own. Every hole in the exported
+  surface is one this trim opened.
 """
 
 import sys
@@ -31,7 +34,11 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter
 from . import frame
 from .case import load_case
 from .dtm_io import save_xyz
-from .terrain import export_triangles, poisson_surface
+from .clean_stl import clean
+from .terrain import compact_triangles, export_triangles, poisson_surface
+
+MAX_GAP = 5.0  # m; the surface is kept this far from the cloud, so the
+# reconstruction bridges anything narrower and wider voids stay open
 
 
 def write_vtp(path, points):
@@ -60,19 +67,20 @@ def write_poisson_stl(path, points, case):
     """The case's Poisson surface of the points, where there are points."""
     surface, rotation, center = poisson_surface(points, case)
     t0 = time.perf_counter()
-    cell = 1.1 * np.ptp(surface.points, axis=0).max() / 2**case.poisson_depth
     centroids = surface.vertices[surface.triangles].mean(axis=1)
     distance, _ = cKDTree(surface.points).query(
-        centroids, distance_upper_bound=2 * cell, workers=-1
+        centroids, distance_upper_bound=MAX_GAP, workers=-1
     )
     near = np.isfinite(distance)
     print(
-        f"  octree cell {cell:.3f} m: {int(near.sum()):,} of {len(near):,} triangles "
-        f"within {2 * cell:.3f} m of a point, found in {time.perf_counter() - t0:.1f}s",
+        f"  {int(near.sum()):,} of {len(near):,} triangles within {MAX_GAP} m of a point, "
+        f"found in {time.perf_counter() - t0:.1f}s",
         flush=True,
     )
-    vertices = frame.to_dtm(surface.vertices, rotation, center)
-    export_triangles(path, vertices, surface.triangles, keep=near)
+    vertices, triangles = compact_triangles(
+        frame.to_dtm(surface.vertices, rotation, center), surface.triangles, near
+    )
+    export_triangles(path, *clean(vertices, triangles))
 
 
 def main(argv=None):

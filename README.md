@@ -56,8 +56,24 @@ to 1 mm, logged and written in the `.xyz` comment line), z elevation. The
 `.vtp` holds every point in binary -- open it rather than the `.xyz`, whose
 size ParaView's CSV reader does not survive. The `.stl` is the surface the
 given `poisson` case would reconstruct from the cloud, with its `outward`,
-`voxel_size` and `poisson_depth`, cut down to the triangles within two octree
-cells of a point.
+`voxel_size` and `poisson_depth`.
+
+That reconstruction is closed, and away from the data it closes itself with
+surfaces of no meaning, so the export keeps only the triangles within
+`las_export.MAX_GAP` (5 m) of a point -- which is the same as choosing how
+wide a gap in the cloud the reconstruction may bridge by itself, and every
+hole in the result is one this trim opened. What is left is then tidied by
+
+```bash
+python -m dtm_voxelization.clean_stl IN.stl OUT.stl   # on a surface you already have
+```
+
+which drops the patches floating free of the surface (under 1% of the largest
+one's area), triangulates over the holes with VTK, and smooths with a few
+Taubin iterations -- centimetres, and a vertex moving more than 1% of the
+mesh diagonal fails the run rather than writing a surface turned inside out.
+las_export runs it on what it writes. None of this touches the `dtm_surface.stl`
+a case builds.
 
 ## A case
 

@@ -78,6 +78,12 @@ def footprint_rectangle(xy):
     return rect
 
 
+def compact_triangles(points, triangles, keep):
+    """Only the kept triangles, renumbered onto the points they use."""
+    used, compact = np.unique(triangles[keep], return_inverse=True)
+    return points[used], compact.reshape(-1, 3)
+
+
 def export_triangles(path, points, triangles, keep=None):
     """Binary STL: an ASCII one of a Poisson mesh runs to hundreds of MB.
     `keep`, a mask over the triangles, writes only those and their points.
@@ -90,8 +96,7 @@ def export_triangles(path, points, triangles, keep=None):
         print(f"  dropping {int(degenerate.sum()):,} zero-area triangles", flush=True)
         keep = ~degenerate if keep is None else keep & ~degenerate
     if keep is not None:
-        used, compact = np.unique(triangles[keep], return_inverse=True)
-        points, triangles = points[used], compact.reshape(-1, 3)
+        points, triangles = compact_triangles(points, triangles, keep)
     meshio.write_points_cells(path, points, [("triangle", triangles)], binary=True)
     print(f"wrote {path} -- {len(points):,} points, {len(triangles):,} triangles", flush=True)
 
