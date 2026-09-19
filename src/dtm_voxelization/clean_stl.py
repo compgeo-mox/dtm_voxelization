@@ -1,11 +1,13 @@
-"""Tidy up a reconstructed surface: drop the patches that float free of it,
+"""Tidy up a reconstructed surface: keep only its largest connected part,
 triangulate over the holes it has left, and smooth it lightly.
 
 `python -m dtm_voxelization.clean_stl IN.stl OUT.stl` does it to a surface that
 already exists -- las_export runs the same on the STL it writes.
 
-The order matters: patches first, so no hole is closed against a piece of
-rubbish, and smoothing last, over the filled mesh.
+The order matters: the other parts go first, so no hole is closed against a
+piece of rubbish, and smoothing comes last, over the filled mesh. Every part
+but the largest is dropped, however big: a gap wider than las_export's MAX_GAP
+that splits the surface in two loses the smaller side along with the rubbish.
 
 Holes are filled by VTK. Open3D's own fill_holes was tried first and is not
 usable here: it saturates (5, 15 and 30 m thresholds all added the same 1454
@@ -36,7 +38,6 @@ from vtkmodules.vtkFiltersModeling import vtkFillHolesFilter
 
 from .terrain import export_triangles
 
-MIN_PATCH_AREA = 0.01  # of the largest connected patch's area
 HOLE_SIZE = 20.0  # m, the largest hole RADIUS to fill: keep it well under the
 # radius of the surface's own outer rim, which is a hole like any other to VTK
 SMOOTHING_ITERATIONS = 5
@@ -79,7 +80,7 @@ def boundary_edges(triangles):
 
 
 def clean(vertices, triangles):
-    """(vertices, triangles), detached patches dropped, holes filled, smoothed."""
+    """(vertices, triangles): the largest part only, holes filled, smoothed."""
     import open3d as o3d  # as in terrain.py: the heavy import only where used
 
     t0 = time.perf_counter()
@@ -92,14 +93,15 @@ def clean(vertices, triangles):
 
     labels, _, areas = mesh.cluster_connected_triangles()
     labels, areas = np.asarray(labels), np.asarray(areas)
-    small = areas < MIN_PATCH_AREA * areas.max()
+    others = labels != np.argmax(areas)
+    second = np.sort(areas)[-2] if len(areas) > 1 else 0.0
     print(
-        f"  {len(areas):,} connected patches, largest {areas.max():,.0f} m2: dropping "
-        f"{int(small[labels].sum()):,} triangles in the {int(small.sum()):,} under "
-        f"{100 * MIN_PATCH_AREA:g}% of it",
+        f"  {len(areas):,} connected parts: keeping the largest, {areas.max():,.0f} m2 "
+        f"({100 * areas.max() / areas.sum():.2f}% of the area); dropping {int(others.sum()):,} "
+        f"triangles in the other {len(areas) - 1:,}, the biggest of them {second:,.0f} m2",
         flush=True,
     )
-    mesh.remove_triangles_by_mask(small[labels])
+    mesh.remove_triangles_by_mask(others)
     mesh.remove_unreferenced_vertices()
     vertices, triangles = np.asarray(mesh.vertices), np.asarray(mesh.triangles)
 

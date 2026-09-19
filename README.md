@@ -68,8 +68,8 @@ hole in the result is one this trim opened. What is left is then tidied by
 python -m dtm_voxelization.clean_stl IN.stl OUT.stl   # on a surface you already have
 ```
 
-which drops the patches floating free of the surface (under 1% of the largest
-one's area), triangulates over the holes with VTK, and smooths with a few
+which keeps only the surface's largest connected part, triangulates over the
+holes with VTK, and smooths with a few
 Taubin iterations -- centimetres, and a vertex moving more than 1% of the
 mesh diagonal fails the run rather than writing a surface turned inside out.
 las_export runs it on what it writes. None of this touches the `dtm_surface.stl`
