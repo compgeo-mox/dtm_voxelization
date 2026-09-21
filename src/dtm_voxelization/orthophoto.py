@@ -38,13 +38,15 @@ from .dtm_io import interpolate_in_parallel
 from .shift_fracture import M  # the same Rialba mean
 from .terrain import compact_triangles, grid_triangles
 
-TARGET_PIXELS = 2_000_000
+TARGET_PIXELS = 8_000_000
 
 
 def downsample(path):
     """(rgba (h, w, 4), transform) of the photo, decimated to TARGET_PIXELS."""
     with rasterio.open(path) as photo:
-        factor = max(1, int(np.ceil(np.sqrt(photo.width * photo.height / TARGET_PIXELS))))
+        factor = max(
+            1, int(np.ceil(np.sqrt(photo.width * photo.height / TARGET_PIXELS)))
+        )
         height, width = photo.height // factor, photo.width // factor
         print(
             f"read {path}: {photo.width:,} x {photo.height:,} pixels, {photo.count} bands, "
@@ -54,9 +56,13 @@ def downsample(path):
             flush=True,
         )
         t0 = time.perf_counter()
-        bands = photo.read(out_shape=(photo.count, height, width), resampling=Resampling.average)
+        bands = photo.read(
+            out_shape=(photo.count, height, width), resampling=Resampling.average
+        )
         print(f"  decimated read in {time.perf_counter() - t0:.1f}s", flush=True)
-        return np.moveaxis(bands, 0, -1), photo.transform * rasterio.Affine.scale(factor)
+        return np.moveaxis(bands, 0, -1), photo.transform * rasterio.Affine.scale(
+            factor
+        )
 
 
 def drape(rgba, transform, terrain):
@@ -99,7 +105,9 @@ def main(argv=None):
     photo_path = Path(argv[0]).resolve()
     case = load_case(argv[1])
     if case.surface != "height_field":
-        raise SystemExit(f"{argv[1]}: surface is {case.surface!r}, draping needs a height field")
+        raise SystemExit(
+            f"{argv[1]}: surface is {case.surface!r}, draping needs a height field"
+        )
 
     rgba, transform = downsample(photo_path)
     small = photo_path.with_name(photo_path.stem + "_small.png")
