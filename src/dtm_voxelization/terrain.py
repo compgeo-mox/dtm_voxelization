@@ -79,9 +79,27 @@ def footprint_rectangle(xy):
 
 
 def compact_triangles(points, triangles, keep):
-    """Only the kept triangles, renumbered onto the points they use."""
+    """Only the kept triangles, renumbered onto the points they use, and the
+    indices of those points, for whatever else is attached to them."""
     used, compact = np.unique(triangles[keep], return_inverse=True)
-    return points[used], compact.reshape(-1, 3)
+    return points[used], compact.reshape(-1, 3), used
+
+
+def grid_triangles(nx, ny):
+    """Two triangles per quad of an nx x ny grid of vertices numbered i * ny + j,
+    counter-clockwise seen from +z."""
+    i = np.arange(nx - 1)[:, None]
+    j = np.arange(ny - 1)[None, :]
+    lower_left = (i * ny + j).ravel()
+    lower_right = lower_left + ny
+    upper_left = lower_left + 1
+    upper_right = lower_right + 1
+    return np.vstack(
+        (
+            np.column_stack((lower_left, lower_right, upper_right)),
+            np.column_stack((lower_left, upper_right, upper_left)),
+        )
+    )
 
 
 def export_triangles(path, points, triangles, keep=None):
@@ -96,7 +114,7 @@ def export_triangles(path, points, triangles, keep=None):
         print(f"  dropping {int(degenerate.sum()):,} zero-area triangles", flush=True)
         keep = ~degenerate if keep is None else keep & ~degenerate
     if keep is not None:
-        points, triangles = compact_triangles(points, triangles, keep)
+        points, triangles, _ = compact_triangles(points, triangles, keep)
     meshio.write_points_cells(path, points, [("triangle", triangles)], binary=True)
     print(f"wrote {path} -- {len(points):,} points, {len(triangles):,} triangles", flush=True)
 
@@ -148,19 +166,7 @@ class HeightField:
         x_grid, y_grid, z_grid = self.dtm["X"], self.dtm["Y"], self.dtm["Z"]
         nx, ny = z_grid.shape
         points = np.column_stack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel()))
-        i = np.arange(nx - 1)[:, None]
-        j = np.arange(ny - 1)[None, :]
-        lower_left = (i * ny + j).ravel()
-        lower_right = lower_left + ny
-        upper_left = lower_left + 1
-        upper_right = lower_right + 1
-        triangles = np.vstack(
-            (
-                np.column_stack((lower_left, lower_right, upper_right)),
-                np.column_stack((lower_left, upper_right, upper_left)),
-            )
-        )
-        export_triangles(path, points, triangles)
+        export_triangles(path, points, grid_triangles(nx, ny))
 
 
 class PoissonSurface:

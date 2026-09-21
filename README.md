@@ -75,6 +75,21 @@ mesh diagonal fails the run rather than writing a surface turned inside out.
 las_export runs it on what it writes. None of this touches the `dtm_surface.stl`
 a case builds.
 
+An orthophoto of the same DTM becomes a view of it:
+
+```bash
+python -m dtm_voxelization.orthophoto path/to/ortho.tif cases/rialba.toml
+```
+
+writing beside the photo a downsampled `.png` of it and a `.vtu` of the case's
+terrain carrying the photo's colour, one vertex per downsampled pixel
+(`orthophoto.TARGET_PIXELS`, 2M, which at Rialba is 0.6 m per pixel). Open the
+`.vtu`, colour by `rgb` and turn *Map Scalars* off. The colour is the photo's,
+the shape the DTM's, so trees and rock show as colour on a terrain that stays
+as smooth as the cloud it is interpolated from. Pixels the photo marks
+transparent are left as holes. The photo's own georeferencing is used, not a
+`.tfw` beside it.
+
 ## A case
 
 A new DTM is a new copy of [`cases/rialba.toml`](cases/rialba.toml) (a

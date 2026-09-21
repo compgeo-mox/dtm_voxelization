@@ -77,7 +77,7 @@ def write_poisson_stl(path, points, case):
         f"found in {time.perf_counter() - t0:.1f}s",
         flush=True,
     )
-    vertices, triangles = compact_triangles(
+    vertices, triangles, _ = compact_triangles(
         frame.to_dtm(surface.vertices, rotation, center), surface.triangles, near
     )
     export_triangles(path, *clean(vertices, triangles))
