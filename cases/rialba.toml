@@ -25,6 +25,7 @@ inner_regions = [
     [-260.0, -110.0, 175.0, 270.0],   # over the fracture
     [-200.0,  -60.0, 240.0, 360.0],   # intersects the first, further up the slope
     [ -40.0,  -10.0, 400.0, 425.0],   # far enough to keep its own, shallower depth
+    [-310.0, -217.0, -103.0, -14.0],  # around the source points of data/source_pts
 ]
 region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,

@@ -54,5 +54,8 @@ computation on our side. Could you confirm which datum the coordinates are in,
 and whether the Quota column is ellipsoidal or orthometric, and if orthometric
 which geoid model was used to reduce it?
 
-In the meantime we are using the coordinates exactly as delivered, with no
-vertical correction applied, so nothing downstream depends on the answer yet.
+In the meantime we are keeping only the part of the survey we can rely on: we
+take the Est and Nord as delivered and put each point on our terrain at that
+position, dropping it by the 40 m above. That is good enough for what we are
+doing now, but it does mean the measured elevations are unused, so we would
+rather have the reference sorted out.
