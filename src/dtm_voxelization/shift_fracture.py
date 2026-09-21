@@ -4,7 +4,7 @@ import meshio
 import numpy as np
 from scipy.spatial import Delaunay
 
-# Mean of the original point cloud and the shift applied by the software
+# Mean of the original point cloud for Rialba and the shift applied by the software
 M = np.array([5.27837393e05, 5.08219147e06, 4.74976610e02])
 S = np.array([-527000.0, -5082000.0, 0.0])
 
