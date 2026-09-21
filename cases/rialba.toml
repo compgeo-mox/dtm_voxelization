@@ -22,7 +22,7 @@ z_padding = 50.0                 # domain below the lowest and above the highest
 # template, and the build refuses it.
 inner_regions = [
     [-260.0,  -10.0,  175.0, 425.0],  # the towers and the fracture (x [-192,-123], y [227,267])
-    [-310.0, -180.0, -103.0, 180.0],  # the source points, reaching into that one
+    [-310.0,  -10.0, -103.0, 180.0],  # the source points, as wide as that one
 ]
 region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
