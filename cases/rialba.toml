@@ -38,6 +38,12 @@ name = "frattura_verticale"
 stl = "../data/surfaces/frattura_verticale_shifted.stl"
 translation = [0.0, 0.0, -474.976610]
 
+# built by `python -m dtm_voxelization.fracture_surface` from the surveyed
+# polyline around the tower, already in the DTM's frame: no translation
+[[surfaces]]
+name = "torrione1-2"
+stl = "../data/surfaces/Polyline_torrione1-2.stl"
+
 # a polygon given directly in the DTM's frame, corners in order:
 # [[surfaces]]
 # name = "piano_1"
