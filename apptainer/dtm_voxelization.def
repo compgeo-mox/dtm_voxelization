@@ -26,8 +26,12 @@ From: ubuntu:24.04
     apt-get update -y
     apt-get install -y --no-install-recommends \
         python3 python3-venv ca-certificates vim less
-    # Open3D links against these even when used headlessly
-    apt-get install -y --no-install-recommends libgl1 libgomp1 libudev1
+    # Open3D links against these even when used headlessly: `ldd` on its
+    # pybind module and libOpen3D.so lists libGL/libGLX/libGLdispatch (libgl1),
+    # libEGL (libegl1), libudev, libusb and libtbb -- the last three appeared
+    # with 0.20 and broke the build's own %test with an ImportError
+    apt-get install -y --no-install-recommends \
+        libgl1 libegl1 libgomp1 libudev1 libusb-1.0-0 libtbb12
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 
