@@ -18,13 +18,18 @@ class Surface:
 
     `remove_detached`: throw away whatever this surface cuts loose -- the rock
     above a cavity, say. Off by default, because a surface that cuts a tower
-    free has cut free the very thing the case is about."""
+    free has cut free the very thing the case is about.
+
+    `refine_around`: split the cells over this surface once more than the
+    inner region they sit in, so a feature smaller than that region's cells --
+    a cavity -- is drawn at all."""
 
     name: str
     stl: Path | None
     translation: tuple
     corners: np.ndarray | None
     remove_detached: bool
+    refine_around: bool
 
 
 @dataclass(frozen=True)
@@ -132,9 +137,12 @@ def load_case(path):
     for i, entry in enumerate(data.get("surfaces", [])):
         where = f"{path.name} [[surfaces]] #{i + 1}"
         _check_keys(
-            entry, {"name"}, {"stl", "translation", "corners", "remove_detached"}, where
+            entry,
+            {"name"},
+            {"stl", "translation", "corners", "remove_detached", "refine_around"},
+            where,
         )
-        remove_detached = bool(entry.get("remove_detached", False))
+        flags = (bool(entry.get("remove_detached", False)), bool(entry.get("refine_around", False)))
         if ("stl" in entry) == ("corners" in entry):
             raise ValueError(f"{where}: give exactly one of 'stl' or 'corners'")
         if "corners" in entry:
@@ -143,15 +151,13 @@ def load_case(path):
             corners = np.asarray(entry["corners"], dtype=float)
             if corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3:
                 raise ValueError(f"{where}: corners must be at least 3 [x, y, z] points")
-            surfaces.append(
-                Surface(entry["name"], None, (0.0, 0.0, 0.0), corners, remove_detached)
-            )
+            surfaces.append(Surface(entry["name"], None, (0.0, 0.0, 0.0), corners, *flags))
         else:
             translation = tuple(float(t) for t in entry.get("translation", (0, 0, 0)))
             if len(translation) != 3:
                 raise ValueError(f"{where}: translation must be [dx, dy, dz]")
             surfaces.append(
-                Surface(entry["name"], root / entry["stl"], translation, None, remove_detached)
+                Surface(entry["name"], root / entry["stl"], translation, None, *flags)
             )
 
     names = [s.name for s in surfaces]

@@ -55,6 +55,7 @@ from . import templates as T
 from . import terrain as terrain_surfaces
 from .geometry_checks import check_conformity_3d, hex_volumes_signed
 from .mesh import peak_memory_gb
+from .surfaces import triangles as surface_triangles
 
 SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
 MAX_ITERATIONS = 3
@@ -115,9 +116,9 @@ def union_bounds(regions):
     )
 
 
-def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, outer_scale, fractions):
+def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, outer_scale, fractions, around=None):
     """Carved cells a build at `cell_edge` would give, without building it:
-    the same grid sizing, footprints and layers as build_double_refined_grid,
+    the same grid sizing, footprints and layers as build_refined_grid,
     with each level's refined cells adding 26 hexes weighted by the rock
     fraction of its region (`fractions` is (domain, outer, [one per inner
     region])). Transition templates are ignored."""
@@ -141,6 +142,14 @@ def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bound
             if buf_lo <= k <= buf_hi
         ]
         level2 += 26 * fraction * len(footprint2) * len(k_layers2)
+    for bbox in (around or {}).values():
+        margin = 2 * cell_edge / 3
+        footprint3 = footprint_from_region(
+            XMIN, YMIN, cell_edge / 9, cell_edge / 9, 9 * NX, 9 * NY,
+            bbox[0] - margin, bbox[1] + margin, bbox[2] - margin, bbox[3] + margin,
+        )
+        layers3 = k_range_from_z(bbox[4] - margin, bbox[5] + margin, ZMIN, hz / 9, 9 * NZ)
+        level2 += 26 * len(footprint3) * len(layers3)  # a cavity is all rock
     return (
         f_domain * NX * NY * NZ
         + 26 * f_outer * len(footprint1) * len(k_layers1)
@@ -148,7 +157,7 @@ def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bound
     )
 
 
-def build_double_refined_grid(
+def build_refined_grid(
     cell_edge,
     XMIN,
     YMIN,
@@ -159,6 +168,7 @@ def build_double_refined_grid(
     inner_bounds,
     outer_bounds,
     terrain,
+    around=None,
     validate_mesh=False,
 ):
     """One full build attempt at the given (isotropic-xy) cell_edge: grid
@@ -320,6 +330,7 @@ def build_double_refined_grid(
                 break
 
     n_footprint2 = 0
+    level3 = []
     for group in groups:
         footprint2 = group["fp"]
         k_layers2 = list(range(group["klo"], group["khi"] + 1))
@@ -341,6 +352,56 @@ def build_double_refined_grid(
         print(
             f"[level 2] regions {group['members']}: {len(footprint2)} footprint cells x "
             f"{len(k_layers2)} layers (k {k_layers2[0]}..{k_layers2[-1]}) -> {len(hexes):,} hexes, "
+            f"peak memory {peak_memory_gb():.2f} GB",
+            flush=True,
+        )
+        level3.append((group, k_layers2))
+
+    # level 3: one more split around the surfaces the case marks, nested in
+    # whichever level-2 group holds them, with the same 2-cell buffer that
+    # level 2 needs inside level 1 -- vertically it is that group's own k range
+    # in the finer grid, less two cells at each end.
+    NX3, NY3, NZ3 = NX * 9, NY * 9, NZ * 9
+    h3, hz3 = h_xy / 9, hz / 9
+    margin = 2 * hxf  # two level-2 cells of room around the surface itself
+    for name, bbox in (around or {}).items():
+        box = (
+            bbox[0] - margin, bbox[1] + margin,
+            bbox[2] - margin, bbox[3] + margin,
+            bbox[4] - margin, bbox[5] + margin,
+        )
+        footprint3 = footprint_from_region(XMIN, YMIN, h3, h3, NX3, NY3, *box[:4])
+        if not footprint3:
+            raise ValueError(f"the box around {name} covers no level-2-child cell centre")
+        holder = [
+            (group, k2)
+            for group, k2 in level3
+            if footprint_from_region(XMIN, YMIN, hxf, hyf, NXf, NYf, *box[:4]) <= group["fp"]
+        ]
+        if not holder:
+            raise ValueError(
+                f"the box around {name} is not inside one level-2 region: refining it "
+                f"further has nothing to nest in"
+            )
+        _, k2 = holder[0]
+        k_layers3 = [
+            k
+            for k in k_range_from_z(box[4], box[5], ZMIN, hz3, NZ3)
+            if k2[0] * 3 + 2 <= k <= (k2[-1] + 1) * 3 - 1 - 2
+        ]
+        if not k_layers3:
+            raise ValueError(
+                f"the box around {name} leaves no room for the level-3 vertical buffer "
+                f"inside its level-2 region"
+            )
+        points, hexes, tags = GR.refine_region_further(
+            points, hexes, tags, footprint3, k_layers3,
+            NX3, NY3, NZ3, LX0, LY0, LZ0, cell_size=(h3, h3, hz3),
+        )
+        print(
+            f"[level 3] around {name}: {len(footprint3)} footprint cells x {len(k_layers3)} "
+            f"layers (k {k_layers3[0]}..{k_layers3[-1]}), cells of {h3 / 3:.2f} m -> "
+            f"{len(hexes):,} hexes, "
             f"peak memory {peak_memory_gb():.2f} GB",
             flush=True,
         )
@@ -424,6 +485,21 @@ def run(case):
     """Build the refined carved grid of the case's DTM -> grid.vtu, frame.npz,
     dtm_surface.stl, all in the grid's frame."""
     terrain, rotation, center = terrain_surfaces.build(case)
+    # the surfaces the case wants a further split around, as the box they
+    # occupy in the grid's frame; the margin is added per build, once the cell
+    # size is known
+    around = {}
+    for surface in case.surfaces:
+        if surface.refine_around:
+            corners = frame.to_grid(
+                surface_triangles(surface).reshape(-1, 3), rotation, center
+            )
+            lo, hi = corners.min(axis=0), corners.max(axis=0)
+            around[surface.name] = (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
+            print(
+                f"refining around {surface.name}: x=[{lo[0]:.1f},{hi[0]:.1f}] "
+                f"y=[{lo[1]:.1f},{hi[1]:.1f}] z=[{lo[2]:.1f},{hi[2]:.1f}]"
+            )
     print(f"terrain ready, peak memory {peak_memory_gb():.2f} GB", flush=True)
     case.output.mkdir(parents=True, exist_ok=True)
     frame.save(case.frame_path, rotation, center)
@@ -487,7 +563,7 @@ def run(case):
         1.0 / 3.0
     )
     predicted = predicted_cells(
-        cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, case.outer_scale, fractions
+        cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bounds, case.outer_scale, fractions, around
     )
     print(
         f"[presize] rock fractions: domain {fractions[0]:.3f}, outer {fractions[1]:.3f}, "
@@ -515,7 +591,7 @@ def run(case):
             f"z=[{outer_bounds[4]:.1f},{outer_bounds[5]:.1f}]",
             flush=True,
         )
-        points, hexes, tags, keep, grid = build_double_refined_grid(
+        points, hexes, tags, keep, grid = build_refined_grid(
             cell_edge,
             XMIN,
             YMIN,
@@ -526,6 +602,7 @@ def run(case):
             inner_bounds,
             outer_bounds,
             terrain,
+            around=around,
             validate_mesh=case.validate_mesh,
         )
         n_kept = int(keep.sum())

@@ -9,7 +9,7 @@ surface = "height_field"            # the terrain is z = f(x, y): linear interpo
 trim_to_footprint = false           # the points cover the whole rectangle
 
 [grid]
-target_cells = 2_000_000           # carved cells to aim for (accepted within +-30%)
+target_cells = 2_200_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
 # level-2 rectangles [xmin, xmax, ymin, ymax]. Each takes its own z range from
 # the terrain over its own rectangle. Rectangles may INTERSECT: ones closer
@@ -57,3 +57,4 @@ stl = "../data/surfaces/polylines/Polyline_torrione4-5.stl"
 name = "cavita_torrione1"
 stl = "../data/surfaces/polylines/Polyline_contorno_cavità_torrione1.stl"
 remove_detached = true           # the rock this one cuts loose is the cavity itself
+refine_around = true             # and it is far smaller than the cells around it
