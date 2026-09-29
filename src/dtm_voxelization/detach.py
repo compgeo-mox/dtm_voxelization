@@ -247,6 +247,7 @@ def run(case):
     crack_cell = np.zeros(len(hexes))
     side_color = np.zeros(len(hexes))
     if n_cut == 0:
+        np.savez(case.sealed_path, sealed=0)
         print("  nothing to split, writing the grid unchanged", flush=True)
         new_points, new_hexes, opening = points, hexes, np.zeros_like(points)
     else:
@@ -258,6 +259,13 @@ def run(case):
         )
         copies = face_copies(hexes, faces, owners, cut_mask, inc)
         check_split(new_hexes, faces, owners, cut_mask, copies)
+
+        # a cut face whose four nodes all stayed welded is still an internal
+        # face: it never becomes two boundary faces, and speed must not look
+        # for its twin
+        sealed = int((copies[0] == copies[1]).all(axis=1).sum())
+        np.savez(case.sealed_path, sealed=sealed)
+        print(f"  {sealed} of the cut faces stayed sealed, at the tips", flush=True)
 
         touched = np.unique(owners[cut_mask])
         welded = np.unique(copies[0][copies[0] == copies[1]])

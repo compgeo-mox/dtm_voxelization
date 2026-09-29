@@ -28,6 +28,22 @@ The polyline is not planar, and the surface keeps its shape. Three steps:
   the interior vertices get their w from it rather than lying flat on the
   plane.
 
+- SMOOTH. Three things creased these surfaces.
+
+  The outline itself folds: on tower 4-5 two surveyed points sit either side
+  of a 143 degree kink, and no fitting can smooth what the boundary does.
+  SMOOTH_PASSES runs Taubin along the closed line first -- a shrinking pass
+  and an expanding one, which keeps the line where it is rather than pulling
+  it towards its centre as plain averaging would.
+
+  Then two artefacts. Most of it was the outline: the
+  offset polygon has spikes, and walking it at `step` left pairs of vertices
+  15 cm apart where the triangles between them fold flat -- 180 degree creases
+  between slivers of a tenth of a square metre. Those points are dropped now.
+  What is left is the spline swinging between survey points that nearly double
+  back, and SMOOTHING lets it sit a little off them rather than through them,
+  which costs centimetres and takes tens of degrees off the sharpest crease.
+
 - EXPAND. The outline is pushed outwards by EXPAND of its own size, so the
   surface reaches a little past the survey. It is an offset, not a scaling
   about the centre: scaling swings a long closing chord across the corner it
@@ -60,11 +76,17 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.polyline import is_closed, load, paths
     from dtm_voxelization.terrain import export_triangles
 
-EXPAND = 0.01  # of the outline's size, pushed outwards from it
+EXPAND = 0.03  # of the outline's size, pushed outwards from it
+EXPAND_MORE = {"cavità": 0.3}  # more than that, by a fragment of the survey's file name: a
+# cavity has to reach out of the rock before it cuts anything off
 REFINE = 1  # triangles per step of the survey, along each direction: the mesh
 # is built at the polyline's own median step divided by this, so 2 gives about
 # four times the triangles and 3 about nine
 OUTWARD = (0.0, 1.0, 0.0)  # which way the surface faces, for the plane's normal
+SMOOTH_PASSES = 4  # Taubin passes along the outline itself, before anything
+SMOOTHING = 1.0  # of the spline: how far it may sit off a surveyed point, in
+# the sense scipy's RBFInterpolator gives the word, to stop it swinging between
+# two that nearly double back
 
 
 def inside(polygon, points):
@@ -94,7 +116,11 @@ def resample(outline, step):
     closed = np.vstack([outline, outline[:1]])
     walked = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(closed, axis=0), axis=1))])
     wanted = np.arange(0.0, walked[-1], step)
-    return np.column_stack([np.interp(wanted, walked, closed[:, k]) for k in (0, 1)])
+    walk = np.column_stack([np.interp(wanted, walked, closed[:, k]) for k in (0, 1)])
+    # a spike of the offset polygon can leave two of these all but on top of
+    # each other, and the triangles between them fold flat
+    gap = np.linalg.norm(np.diff(np.vstack([walk, walk[:1]]), axis=0), axis=1)
+    return walk[gap > step / 2]
 
 
 def mesh_polygon(outline, step, keep_as_vertices):
@@ -135,9 +161,48 @@ def mesh_polygon(outline, step, keep_as_vertices):
     return points, kept
 
 
+def mesh_3d(mesh, surface, rotation, center):
+    """The mesh's (u, v) lifted onto the surface and back into the DTM's frame."""
+    return frame.to_dtm(np.column_stack([mesh, surface(mesh)]), rotation, center)
+
+
+def smooth_closed(points, passes):
+    """Taubin along a closed line: each pass moves every point halfway towards
+    its neighbours' midpoint and then most of the way back out, which takes
+    kinks off without shrinking the line."""
+    for _ in range(passes):
+        for weight in (0.5, -0.53):
+            middle = (np.roll(points, 1, axis=0) + np.roll(points, -1, axis=0)) / 2
+            points = points + weight * (middle - points)
+    return points
+
+
+def dihedral(vertices, triangles):
+    """The sharpest angle between two triangles sharing an edge, in degrees."""
+    corners = vertices[triangles]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    edges = np.sort(np.vstack([triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]]), axis=1)
+    _, inverse, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    owner = np.tile(np.arange(len(triangles)), 3)
+    order = np.argsort(inverse)
+    pairs = owner[order][np.isin(inverse[order], np.where(counts == 2)[0])].reshape(-1, 2)
+    cosine = np.einsum("ij,ij->i", normals[pairs[:, 0]], normals[pairs[:, 1]])
+    return float(np.degrees(np.arccos(np.clip(cosine, -1, 1))).max())
+
+
 def surface_of(path, points, traces):
     """Write the STL of the surface bounded by one closed polyline, passing
     through whichever of `traces` runs inside it."""
+    if SMOOTH_PASSES:
+        smoothed = smooth_closed(points, SMOOTH_PASSES)
+        moved = np.linalg.norm(smoothed - points, axis=1)
+        print(
+            f"  {SMOOTH_PASSES} Taubin passes along the outline: its points moved "
+            f"{moved.mean():.3f} m on average, {moved.max():.3f} m at most"
+        )
+        points = smoothed
+
     rotation, center = frame.compute(points, OUTWARD)
     local = frame.to_grid(points, rotation, center)
     print(
@@ -147,8 +212,9 @@ def surface_of(path, points, traces):
 
     step = float(np.median(np.linalg.norm(np.diff(local[:, :2], axis=0), axis=1))) / REFINE
     size = float(np.ptp(local[:, :2], axis=0).max())
-    outline = resample(offset(local[:, :2], EXPAND * size), step)
-    print(f"  outline pushed out by {EXPAND * size:.2f} m, {100 * EXPAND:g}% of its {size:.0f} m")
+    expand = next((v for k, v in EXPAND_MORE.items() if k in path.name), EXPAND)
+    outline = resample(offset(local[:, :2], expand * size), step)
+    print(f"  outline pushed out by {expand * size:.2f} m, {100 * expand:g}% of its {size:.0f} m")
 
     data = local
     spread = float(np.ptp(local[:, 2]))
@@ -168,10 +234,16 @@ def surface_of(path, points, traces):
     mesh, triangles = mesh_polygon(outline, step, data[:, :2])
 
     # the analytic surface: the smoothest w(u, v) through the survey's points
-    surface = RBFInterpolator(data[:, :2], data[:, 2], kernel="thin_plate_spline")
-    vertices = frame.to_dtm(np.column_stack([mesh, surface(mesh)]), rotation, center)
-    at_data = np.abs(surface(data[:, :2]) - data[:, 2]).max()
-    print(f"  thin-plate spline through those {len(data)} points, off them by at most {at_data:.2e} m")
+    surface = RBFInterpolator(
+        data[:, :2], data[:, 2], kernel="thin_plate_spline", smoothing=SMOOTHING
+    )
+    vertices = mesh_3d(mesh, surface, rotation, center)
+    at_data = np.abs(surface(data[:, :2]) - data[:, 2])
+    print(
+        f"  thin-plate spline over those {len(data)} points, smoothing {SMOOTHING}: off them "
+        f"by {at_data.mean():.3f} m on average, {at_data.max():.3f} m at most; the sharpest "
+        f"crease between two triangles is {dihedral(mesh_3d(mesh, surface, rotation, center), triangles):.0f} degrees"
+    )
 
     floor = points[:, 2].min()
     below = vertices[:, 2] < floor

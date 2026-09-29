@@ -65,6 +65,11 @@ class Case:
         return self.output / "detached.vtu"
 
     @property
+    def sealed_path(self):
+        """How many cut faces the detachment left sealed, for speed to expect."""
+        return self.output / "sealed_cut_faces.npz"
+
+    @property
     def speed_dir(self):
         return self.output / "speed"
 

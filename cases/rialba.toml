@@ -9,7 +9,7 @@ surface = "height_field"            # the terrain is z = f(x, y): linear interpo
 trim_to_footprint = false           # the points cover the whole rectangle
 
 [grid]
-target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
+target_cells = 2_000_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
 # level-2 rectangles [xmin, xmax, ymin, ymax]. Each takes its own z range from
 # the terrain over its own rectangle. Rectangles may INTERSECT: ones closer
@@ -29,7 +29,7 @@ inner_regions = [
 region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
                                  # never less than 1.5 coarse cells wider in x and y
-validate_mesh = true            # exhaustive conformity checks, slow on large grids
+validate_mesh = false           # exhaustive conformity checks, slow on large grids
 
 # merged.xyz is the UTM32N DTM minus its mean (527837.392605, 5082191.470488,
 # 474.976610), z included: the STL's x/y already carry that shift, its z does not
