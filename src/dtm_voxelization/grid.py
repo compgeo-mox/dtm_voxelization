@@ -108,6 +108,35 @@ def outer_region(inner_bounds, outer_scale, cell_edge):
     )
 
 
+def bridges(boxes, closer_than):
+    """Rectangles joining the boxes along y, so the refinement around several
+    surfaces comes out one connected body rather than an island each.
+
+    The fractures are a chain along the ridge, which runs in y, so the boxes
+    are taken in that order and each is joined to the next. A bridge spans only
+    where the two face each other -- their overlap in x, across the gap in y --
+    which costs a third of what the bounding box of the lot would, and far less
+    than growing every box until it touches its neighbour."""
+    order = sorted(boxes, key=lambda name: boxes[name][2] + boxes[name][3])
+    made = []
+    for first, second in zip(order, order[1:]):
+        a, b = boxes[first], boxes[second]
+        gap = (min(a[3], b[3]), max(a[2], b[2]))
+        if gap[1] - gap[0] < closer_than:
+            continue  # already touching, or closer than a cell: nothing to bridge
+        overlap = (max(a[0], b[0]), min(a[1], b[1]))
+        if overlap[0] >= overlap[1]:
+            overlap = (min(a[0], b[0]), max(a[1], b[1]))  # nothing faces: span both
+        box = (*overlap, *gap, min(a[4], b[4]), max(a[5], b[5]))
+        made.append((f"{first}->{second}", box))
+        print(
+            f"  bridging {first} to {second}: x=[{box[0]:.1f},{box[1]:.1f}] "
+            f"y=[{box[2]:.1f},{box[3]:.1f}], {box[3] - box[2]:.1f} m of gap",
+            flush=True,
+        )
+    return made
+
+
 def blocked_footprint(xmin, ymin, h, nx, ny, box, block=2):
     """Like footprint_from_region, but rounded out to whole `block` x `block`
     blocks of cells. Two of these, merged, can only step by a multiple of
@@ -400,13 +429,16 @@ def build_refined_grid(
     # the finer grid, less the two-cell buffer at each end.
     NX3, NY3, NZ3 = NX * 9, NY * 9, NZ * 9
     h3, hz3 = h_xy / 9, hz / 9
-    boxes = {}
-    for name, bbox in (around or {}).items():
-        box = (
+    grown = {
+        name: (
             *scale_interval(bbox[0], bbox[1], AROUND_SCALE),
             *scale_interval(bbox[2], bbox[3], AROUND_SCALE),
             *scale_interval(bbox[4], bbox[5], AROUND_SCALE),
         )
+        for name, bbox in (around or {}).items()
+    }
+    boxes = {}
+    for name, box in list(grown.items()) + bridges(grown, h3):
         footprint3 = blocked_footprint(XMIN, YMIN, h3, NX3, NY3, box)
         if not footprint3:
             raise ValueError(f"the box around {name} covers no level-2-child cell centre")
