@@ -39,9 +39,12 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .geometry_checks import hex_volumes_signed
+from .cut import crossings_with_jitter
 from .mesh import build_face_table, read_hex_mesh, require
+from .surfaces import in_grid_frame
 
 OPENING = 0.35  # warp amplitude, as a fraction of the local cut-face size
+PROBE_PAIRS = 200_000  # (point, triangle) pairs probed at once, in `beyond`
 
 
 def find_cut_faces(table_faces, cut_faces):
@@ -237,39 +240,82 @@ def components(hexes, n_points):
     return connected_components(graph, directed=False)[1][:n_cells]
 
 
-def prune(new_points, new_hexes, owners, masks, case, crack_cell, side_color):
-    """Drop what the surfaces marked `remove_detached` cut loose.
+def beyond(points, tri, rng):
+    """Which points lie past the surface, on the side its normals face.
 
-    A surface cuts something loose when the cells on its two sides end up in
-    different pieces of the split mesh; what goes is every piece it touches but
-    the largest. Returns (hexes, cell arrays, keep) of the survivors. The
-    points are left alone, unused ones and all: grid.vtu already carries the
-    points of every hex the carving dropped, and renumbering here would throw
-    those away too -- a change to make deliberately or not at all."""
+    A ray leaving the point that way crosses a finite surface an odd number of
+    times exactly when the surface is in front of it, which is the same parity
+    argument the carving and the cut both rest on. Only the points the surface
+    can shadow are probed -- the rest cannot cross it at all."""
+    normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]).sum(axis=0)
+    normal /= np.linalg.norm(normal)
+    span = float(np.linalg.norm(np.ptp(tri.reshape(-1, 3), axis=0)))
+
+    flat = tri.reshape(-1, 3)
+    middle = flat.mean(axis=0)
+    # full_matrices=False, or LAPACK builds a U of (3 x triangles) squared
+    axes = np.linalg.svd(flat - middle, full_matrices=False)[2][:2]  # in-plane axes
+    shadow = (flat - middle) @ axes.T
+    projected = (points - middle) @ axes.T
+    candidate = np.all(
+        (projected >= shadow.min(axis=0)) & (projected <= shadow.max(axis=0)), axis=1
+    )
+
+    # in batches: count_crossings holds ten (pairs, 3) arrays of doubles at a
+    # time, and its own 2M-pair budget costs gigabytes on a surface of a few
+    # thousand triangles. Nothing here is in a hurry.
+    out = np.zeros(len(points), dtype=bool)
+    idx = np.flatnonzero(candidate)
+    stride = max(1, PROBE_PAIRS // max(1, len(tri)))
+    for lo in range(0, len(idx), stride):
+        here = idx[lo : lo + stride]
+        start = points[here]
+        counts = crossings_with_jitter(start, start + 3 * span * normal, tri, rng)
+        out[here] = counts % 2 == 1
+    return out, int(candidate.sum())
+
+
+def prune(new_points, new_hexes, owners, masks, case, crack_cell, side_color):
+    """Drop what the surfaces marked `remove_detached` cut loose: every cell
+    with even one corner past the surface, on the side its normals face.
+
+    The cells the split leaves in a piece of their own go too, by construction,
+    and their count is reported against the geometric one: a surface that cuts
+    a block free should cover it, and a large gap between the two means the
+    surface faces the wrong way. Returns (hexes, cell arrays, keep) of the
+    survivors. The points are left alone, unused ones and all: grid.vtu already
+    carries the points of every hex the carving dropped, and renumbering here
+    would throw those away too -- a change to make deliberately or not at
+    all."""
     keep = np.ones(len(new_hexes), dtype=bool)
-    wanted = [s.name for s in case.surfaces if s.remove_detached]
+    wanted = [s for s in case.surfaces if s.remove_detached]
     if not wanted:
         return new_hexes, crack_cell, side_color, keep
 
+    rng = np.random.default_rng(0)
     piece = components(new_hexes, len(new_points))
     sizes = np.bincount(piece)
     print(f"  the split mesh is in {len(sizes)} piece(s), the largest {sizes.max():,} cells")
-    for name in wanted:
-        here = np.unique(piece[np.unique(owners[masks[name]])])
-        if len(here) < 2:
-            print(
-                f"  {name}: cuts nothing loose -- both its sides are still the same piece, "
-                f"so there is nothing to remove",
-                flush=True,
-            )
-            continue
-        doomed = here[sizes[here] < sizes[here].max()]
+    for surface in wanted:
+        tri = in_grid_frame(case, surface)
+        past, probed = beyond(new_points, tri, rng)
+        doomed = past[new_hexes].any(axis=1)
+        loose = np.unique(piece[np.unique(owners[masks[surface.name]])])
+        loose = loose[sizes[loose] < sizes[loose].max()]
+        cut_free = np.isin(piece, loose)
         print(
-            f"  {name}: touches {len(here)} pieces ({', '.join(f'{s:,}' for s in sizes[here])} "
-            f"cells), dropping {len(doomed)} of them, {int(sizes[doomed].sum()):,} cells",
+            f"  {surface.name}: {probed:,} of {len(new_points):,} points stand in its shadow, "
+            f"{int(past.sum()):,} of them past it -> {int(doomed.sum()):,} cells with a corner "
+            f"beyond, against {int(cut_free.sum()):,} the split cut loose",
             flush=True,
         )
-        keep &= ~np.isin(piece, doomed)
+        if cut_free.any() and not doomed[cut_free].all():
+            print(
+                f"  WARNING: {int((~doomed[cut_free]).sum()):,} of the cells it cut loose are "
+                f"NOT past it -- the surface may face the wrong way, check OUTWARD",
+                flush=True,
+            )
+        keep &= ~(doomed | cut_free)
 
     print(f"  {int((~keep).sum()):,} cells removed", flush=True)
     return new_hexes[keep], crack_cell[keep], side_color[keep], keep
