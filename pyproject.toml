@@ -14,6 +14,7 @@ dependencies = [
     "numpy",
     "scipy",
     "meshio",
+    "shapely",  # offsetting a fracture's outline, in fracture_surface
 ]
 
 [project.optional-dependencies]

@@ -1,18 +1,19 @@
-"""A surveyed polyline into the DTM's frame, as a .vtu for ParaView:
-`python -m dtm_voxelization.polyline [POLYLINE.txt]`, or the file itself from
-an editor, which takes POLYLINE below.
+"""Every surveyed polyline in data/surfaces/polylines, into the DTM's frame and
+out as a .vtu for ParaView: `python -m dtm_voxelization.polyline`, or the file
+itself from an editor. Drop a new survey in that folder and it is picked up.
 
-The file is the survey's X Y Z in UTM32N, one point per line under a `//X Y Z`
-header, already in order along the line. The grid, the SPEED mesh and the
-fracture surfaces live in the DTM's frame, UTM minus the point cloud's mean M
-(see the README's Data section), so that is what is taken off -- z included.
+Each file is X Y Z in UTM32N, one point per line under a `//X Y Z` header,
+already in order along the line. The grid, the SPEED mesh and the fracture
+surfaces live in the DTM's frame, UTM minus the point cloud's mean M (see the
+README's Data section), so that is what is taken off -- z included.
 
-The line is CLOSED: a segment joins the last point back to the first. The log
-prints the step between consecutive points and that closing step beside it, so
-a file that is not in order, or not a loop, shows up as one step far longer
-than the rest rather than as a quietly wrong shape.
+A line whose two ends are close compared with its own length is taken as
+CLOSED and gets a segment joining the last point back to the first; one whose
+ends are far apart is left open. Among the Rialba surveys the outlines close
+within 3% of their perimeter while the cavity trace's ends stand a full
+length apart, so the two kinds separate cleanly rather than by a guess.
 
-Written next to the survey, as line cells: ParaView draws it as it is.
+Written beside each survey, as line cells: ParaView draws them as they are.
 """
 
 import sys
@@ -27,16 +28,29 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from dtm_voxelization.shift_fracture import M
 
-POLYLINE = "Polyline_torrione1-2.txt"  # in data/surfaces, unless one is given
+POLYLINES = Path(__file__).resolve().parents[2] / "data" / "surfaces" / "polylines"
+CLOSED = 0.1  # ends closer than this much of the line's length: a loop
 
 
-def path_of(argv):
-    """The polyline named on the command line, or POLYLINE in data/surfaces."""
-    if len(argv) > 1:
-        raise SystemExit(__doc__)
-    if argv:
-        return Path(argv[0]).resolve()
-    return Path(__file__).resolve().parents[2] / "data" / "surfaces" / POLYLINE
+def paths():
+    """Every survey in the polylines folder."""
+    found = sorted(POLYLINES.glob("*.txt"))
+    if not found:
+        raise SystemExit(f"no polyline .txt in {POLYLINES}")
+    return found
+
+
+def is_closed(points):
+    """Whether the line comes back to where it started."""
+    steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    gap = float(np.linalg.norm(points[0] - points[-1]))
+    closed = gap < CLOSED * steps.sum()
+    print(
+        f"  steps along the line: {steps.min():.3f} to {steps.max():.3f} m over "
+        f"{steps.sum():.1f} m; the ends stand {gap:.2f} m apart, "
+        f"{100 * gap / steps.sum():.0f}% of that -- {'closed' if closed else 'OPEN'}"
+    )
+    return closed
 
 
 def load(path):
@@ -50,29 +64,17 @@ def load(path):
         f"z [{points[:, 2].min():.2f}, {points[:, 2].max():.2f}]"
     )
 
-    steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
-    closing = float(np.linalg.norm(points[0] - points[-1]))
-    print(
-        f"  steps along the line: {steps.min():.3f} to {steps.max():.3f} m, "
-        f"{steps.sum() + closing:.1f} m around; the closing step is {closing:.3f} m"
-    )
-    if closing > 3 * np.median(steps):
-        print(
-            f"  WARNING: that closing step is {closing / np.median(steps):.1f} times the "
-            f"median one -- the points may not be in order, or the line may not be a loop",
-            flush=True,
-        )
-
     return points
 
 
-def main(argv=None):
-    path = path_of(sys.argv[1:] if argv is None else argv)
-    points = load(path)
-    segments = np.column_stack([np.arange(len(points)), np.roll(np.arange(len(points)), -1)])
-    out = path.with_suffix(".vtu")
-    meshio.write_points_cells(out, points, [("line", segments)], binary=True)
-    print(f"wrote {out}: {len(segments)} segments, the last one closing the loop")
+def main():
+    for path in paths():
+        points = load(path)
+        ends = len(points) if is_closed(points) else len(points) - 1
+        segments = np.column_stack([np.arange(ends), np.roll(np.arange(len(points)), -1)[:ends]])
+        out = path.with_suffix(".vtu")
+        meshio.write_points_cells(out, points, [("line", segments)], binary=True)
+        print(f"wrote {out}: {len(segments)} segments")
 
 
 if __name__ == "__main__":

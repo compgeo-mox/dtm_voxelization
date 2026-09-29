@@ -42,7 +42,7 @@ translation = [0.0, 0.0, -474.976610]
 # polyline around the tower, already in the DTM's frame: no translation
 [[surfaces]]
 name = "torrione1-2"
-stl = "../data/surfaces/Polyline_torrione1-2.stl"
+stl = "../data/surfaces/polylines/Polyline_torrione1-2.stl"
 
 # a polygon given directly in the DTM's frame, corners in order:
 # [[surfaces]]
