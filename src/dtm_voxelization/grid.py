@@ -57,6 +57,7 @@ from .geometry_checks import check_conformity_3d, hex_volumes_signed
 from .mesh import peak_memory_gb
 from .surfaces import triangles as surface_triangles
 
+CLEARANCE = 3  # free cells a refinement call needs from the next one (measured)
 AROUND_SCALE = 1.2  # a `refine_around` surface's own box, grown by this much
 SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
 MAX_ITERATIONS = 3
@@ -105,6 +106,77 @@ def outer_region(inner_bounds, outer_scale, cell_edge):
         max(symax, ymax + margin),
         *scale_interval(zbot, ztop, outer_scale),
     )
+
+
+def blocked_footprint(xmin, ymin, h, nx, ny, box, block=2):
+    """Like footprint_from_region, but rounded out to whole `block` x `block`
+    blocks of cells. Two of these, merged, can only step by a multiple of
+    `block`, and a reentrant corner with a single cell of run past it has no
+    transition template -- which is what the union of two boxes sitting a cell
+    apart would otherwise produce."""
+    i0 = max(0, int(np.floor((box[0] - xmin) / h)))
+    i1 = min(nx - 1, int(np.ceil((box[1] - xmin) / h)) - 1)
+    j0 = max(0, int(np.floor((box[2] - ymin) / h)))
+    j1 = min(ny - 1, int(np.ceil((box[3] - ymin) / h)) - 1)
+    i0, j0 = i0 - i0 % block, j0 - j0 % block
+    i1, j1 = i1 + (block - 1 - i1 % block), j1 + (block - 1 - j1 % block)
+    i1, j1 = min(i1, nx - 1), min(j1, ny - 1)
+    return {(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)}
+
+
+def as_group(members, footprint, layers):
+    """One refinement call: what it covers, and the box it covers it in."""
+    ii = [c[0] for c in footprint]
+    jj = [c[1] for c in footprint]
+    return dict(
+        members=list(members), fp=set(footprint), klo=layers[0], khi=layers[-1],
+        box=(min(ii), max(ii), min(jj), max(jj)),
+    )
+
+
+def free_cells(a, b):
+    """Free cells between two groups' bounding boxes, the wider axis wins."""
+    return max(
+        max(b["box"][0] - a["box"][1] - 1, a["box"][0] - b["box"][1] - 1, 0),
+        max(b["box"][2] - a["box"][3] - 1, a["box"][2] - b["box"][3] - 1, 0),
+    )
+
+
+def merge_close(groups, cell, label):
+    """Merge the groups that come closer than CLEARANCE cells of their own
+    grid: a refinement call needs its buffer ring clear of every other call's
+    transition cells, and the two of them cannot be told to take turns. The
+    merged call covers the union of their footprints over the union of their z
+    ranges -- always buildable, a footprint of any shape being what build_mesh
+    takes -- at the price of being as deep as its deepest member. Merging
+    widens a box and can bring it too close to a third group, so it repeats
+    until nothing moves."""
+    merged = True
+    while merged:
+        merged = False
+        for a in range(len(groups)):
+            for b in range(a + 1, len(groups)):
+                if free_cells(groups[a], groups[b]) >= CLEARANCE:
+                    continue
+                ga, gb = groups[a], groups[b]
+                print(
+                    f"[{label}] {ga['members']} and {gb['members']} are "
+                    f"{free_cells(ga, gb)} cells apart ({CLEARANCE} needed, "
+                    f"{CLEARANCE * cell:.1f} m at this cell size): merged into one call, "
+                    f"z layers {min(ga['klo'], gb['klo'])}..{max(ga['khi'], gb['khi'])}",
+                    flush=True,
+                )
+                groups[a] = as_group(
+                    ga["members"] + gb["members"],
+                    ga["fp"] | gb["fp"],
+                    [min(ga["klo"], gb["klo"]), max(ga["khi"], gb["khi"])],
+                )
+                del groups[b]
+                merged = True
+                break
+            if merged:
+                break
+    return groups
 
 
 def union_bounds(regions):
@@ -289,51 +361,12 @@ def build_refined_grid(
                 f"leaves no room for the level-2 vertical buffer (k must be in "
                 f"[{buf_lo},{buf_hi}] at hzf={hzf:.3f})"
             )
-        ii = [c[0] for c in footprint2]
-        jj = [c[1] for c in footprint2]
-        groups.append(
-            dict(members=[n], fp=footprint2, klo=layers[0], khi=layers[-1],
-                 box=(min(ii), max(ii), min(jj), max(jj)))
-        )
+        groups.append(as_group([n], footprint2, layers))
 
-    def free_cells(a, b):
-        """Free cells between two groups' bounding boxes, the wider axis wins."""
-        return max(
-            max(b["box"][0] - a["box"][1] - 1, a["box"][0] - b["box"][1] - 1, 0),
-            max(b["box"][2] - a["box"][3] - 1, a["box"][2] - b["box"][3] - 1, 0),
-        )
-
-    merged = True
-    while merged:
-        merged = False
-        for a in range(len(groups)):
-            for b in range(a + 1, len(groups)):
-                if free_cells(groups[a], groups[b]) >= 3:
-                    continue
-                ga, gb = groups[a], groups[b]
-                print(
-                    f"[level 2] regions {ga['members']} and {gb['members']} are "
-                    f"{free_cells(ga, gb)} cells apart (3 needed, {3 * hxf:.1f} m at this "
-                    f"cell size): merged into one call, z layers "
-                    f"{min(ga['klo'], gb['klo'])}..{max(ga['khi'], gb['khi'])}",
-                    flush=True,
-                )
-                fp = ga["fp"] | gb["fp"]
-                ii = [c[0] for c in fp]
-                jj = [c[1] for c in fp]
-                groups[a] = dict(
-                    members=ga["members"] + gb["members"], fp=fp,
-                    klo=min(ga["klo"], gb["klo"]), khi=max(ga["khi"], gb["khi"]),
-                    box=(min(ii), max(ii), min(jj), max(jj)),
-                )
-                del groups[b]
-                merged = True
-                break
-            if merged:
-                break
+    groups = merge_close(groups, hxf, "level 2")
 
     n_footprint2 = 0
-    level3 = []
+    level3, groups3 = [], []
     for group in groups:
         footprint2 = group["fp"]
         k_layers2 = list(range(group["klo"], group["khi"] + 1))
@@ -361,29 +394,30 @@ def build_refined_grid(
         level3.append((group, k_layers2))
 
     # level 3: one more split around the surfaces the case marks, nested in
-    # whichever level-2 group holds them, with the same 2-cell buffer that
-    # level 2 needs inside level 1 -- vertically it is that group's own k range
-    # in the finer grid, less two cells at each end.
+    # whichever level-2 group holds them, and merged among themselves by the
+    # same clearance rule -- two towers 4 m apart cannot each have their own
+    # call. Vertically a box is held inside its level-2 group's own k range in
+    # the finer grid, less the two-cell buffer at each end.
     NX3, NY3, NZ3 = NX * 9, NY * 9, NZ * 9
     h3, hz3 = h_xy / 9, hz / 9
+    boxes = {}
     for name, bbox in (around or {}).items():
         box = (
             *scale_interval(bbox[0], bbox[1], AROUND_SCALE),
             *scale_interval(bbox[2], bbox[3], AROUND_SCALE),
             *scale_interval(bbox[4], bbox[5], AROUND_SCALE),
         )
-        footprint3 = footprint_from_region(XMIN, YMIN, h3, h3, NX3, NY3, *box[:4])
+        footprint3 = blocked_footprint(XMIN, YMIN, h3, NX3, NY3, box)
         if not footprint3:
             raise ValueError(f"the box around {name} covers no level-2-child cell centre")
-        holder = [
-            (group, k2)
-            for group, k2 in level3
-            if footprint_from_region(XMIN, YMIN, hxf, hyf, NXf, NYf, *box[:4]) <= group["fp"]
-        ]
+        held = {(i // 3, j // 3) for i, j in footprint3}
+        holder = [(group, k2) for group, k2 in level3 if held <= group["fp"]]
         if not holder:
             raise ValueError(
-                f"the box around {name} is not inside one level-2 region: refining it "
-                f"further has nothing to nest in"
+                f"the box around {name}, x=[{box[0]:.1f},{box[1]:.1f}] "
+                f"y=[{box[2]:.1f},{box[3]:.1f}], is not inside one level-2 region: refining "
+                f"it further has nothing to nest in -- widen the inner region that should "
+                f"hold it"
             )
         _, k2 = holder[0]
         k_layers3 = [
@@ -393,21 +427,26 @@ def build_refined_grid(
         ]
         if not k_layers3:
             raise ValueError(
-                f"the box around {name} leaves no room for the level-3 vertical buffer "
-                f"inside its level-2 region"
+                f"the box around {name}, z=[{box[4]:.1f},{box[5]:.1f}], leaves no room for "
+                f"the level-3 vertical buffer inside its level-2 region, whose own z layers "
+                f"are {k2[0]}..{k2[-1]} -- deepen that region"
             )
+        boxes[name] = box
+        groups3.append(as_group([name], footprint3, k_layers3))
+
+    for group in merge_close(groups3, h3, "level 3"):
+        k_layers3 = list(range(group["klo"], group["khi"] + 1))
         points, hexes, tags = GR.refine_region_further(
-            points, hexes, tags, footprint3, k_layers3,
+            points, hexes, tags, group["fp"], k_layers3,
             NX3, NY3, NZ3, LX0, LY0, LZ0, cell_size=(h3, h3, hz3),
         )
         print(
-            f"[level 3] around {name}: x=[{box[0]:.1f},{box[1]:.1f}] y=[{box[2]:.1f},{box[3]:.1f}] "
-            f"z=[{box[4]:.1f},{box[5]:.1f}], {len(footprint3)} footprint cells x {len(k_layers3)} "
-            f"layers (k {k_layers3[0]}..{k_layers3[-1]}), cells of {h3 / 3:.2f} m -> "
-            f"{len(hexes):,} hexes, "
-            f"peak memory {peak_memory_gb():.2f} GB",
+            f"[level 3] around {', '.join(group['members'])}: {len(group['fp'])} footprint "
+            f"cells x {len(k_layers3)} layers (k {k_layers3[0]}..{k_layers3[-1]}), cells of "
+            f"{h3 / 3:.2f} m -> {len(hexes):,} hexes, peak memory {peak_memory_gb():.2f} GB",
             flush=True,
         )
+
     validation_t0 = time.perf_counter()
     if validate_mesh:
         # every concave block placed by a level-2 call leaves its known volume

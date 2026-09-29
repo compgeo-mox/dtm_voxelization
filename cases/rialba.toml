@@ -9,7 +9,7 @@ surface = "height_field"            # the terrain is z = f(x, y): linear interpo
 trim_to_footprint = false           # the points cover the whole rectangle
 
 [grid]
-target_cells = 2_200_000           # carved cells to aim for (accepted within +-30%)
+target_cells = 2_500_000           # carved cells to aim for (accepted within +-30%)
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
 # level-2 rectangles [xmin, xmax, ymin, ymax]. Each takes its own z range from
 # the terrain over its own rectangle. Rectangles may INTERSECT: ones closer
@@ -24,7 +24,7 @@ inner_regions = [
     # one rectangle over the towers, the fracture (x [-192,-123], y [227,267])
     # and the source points (x [-286,-242], y [-79,-39]), so the fine mesh runs
     # unbroken between them and its outline has no reentrant corner at all
-    [-310.0, -10.0, -103.0, 425.0],
+    [-310.0,  20.0, -103.0, 440.0],
 ]
 region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
@@ -40,18 +40,22 @@ validate_mesh = false           # exhaustive conformity checks, slow on large gr
 [[surfaces]]
 name = "torrione1-2"
 stl = "../data/surfaces/polylines/Polyline_torrione1-2.stl"
+refine_around = true
 
 [[surfaces]]
 name = "torrione2-3"
 stl = "../data/surfaces/polylines/Polyline_torrione2-3.stl"
+refine_around = true
 
 [[surfaces]]
 name = "torrione3-4"
 stl = "../data/surfaces/polylines/Polyline_torrione3-4.stl"
+refine_around = true
 
 [[surfaces]]
 name = "torrione4-5"
 stl = "../data/surfaces/polylines/Polyline_torrione4-5.stl"
+refine_around = true
 
 [[surfaces]]
 name = "cavita_torrione1"
