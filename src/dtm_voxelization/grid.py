@@ -434,7 +434,21 @@ def build_refined_grid(
         boxes[name] = box
         groups3.append(as_group([name], footprint3, k_layers3))
 
-    for group in merge_close(groups3, h3, "level 3"):
+    # one call for all of them, not one per surface: the fractures are a chain
+    # along the ridge and their boxes sit a few metres apart, so they would
+    # merge anyway at any resolution fine enough to matter. Joining them
+    # outright also gives every one of them the same vertical reach, down to
+    # the foot of the lowest, which is what makes the fine zone one connected
+    # body rather than a fine patch per fracture.
+    if groups3:
+        groups3 = [
+            as_group(
+                [name for group in groups3 for name in group["members"]],
+                set().union(*(group["fp"] for group in groups3)),
+                [min(g["klo"] for g in groups3), max(g["khi"] for g in groups3)],
+            )
+        ]
+    for group in groups3:
         k_layers3 = list(range(group["klo"], group["khi"] + 1))
         points, hexes, tags = GR.refine_region_further(
             points, hexes, tags, group["fp"], k_layers3,
