@@ -57,6 +57,7 @@ from .geometry_checks import check_conformity_3d, hex_volumes_signed
 from .mesh import peak_memory_gb
 from .surfaces import triangles as surface_triangles
 
+AROUND_SCALE = 1.2  # a `refine_around` surface's own box, grown by this much
 SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
 MAX_ITERATIONS = 3
 PRESIZE_ITERATIONS = 30
@@ -143,12 +144,14 @@ def predicted_cells(cell_edge, XMIN, YMIN, ZMIN, Lx_dtm, Ly_dtm, Lz, inner_bound
         ]
         level2 += 26 * fraction * len(footprint2) * len(k_layers2)
     for bbox in (around or {}).values():
-        margin = 2 * cell_edge / 3
         footprint3 = footprint_from_region(
             XMIN, YMIN, cell_edge / 9, cell_edge / 9, 9 * NX, 9 * NY,
-            bbox[0] - margin, bbox[1] + margin, bbox[2] - margin, bbox[3] + margin,
+            *scale_interval(bbox[0], bbox[1], AROUND_SCALE),
+            *scale_interval(bbox[2], bbox[3], AROUND_SCALE),
         )
-        layers3 = k_range_from_z(bbox[4] - margin, bbox[5] + margin, ZMIN, hz / 9, 9 * NZ)
+        layers3 = k_range_from_z(
+            *scale_interval(bbox[4], bbox[5], AROUND_SCALE), ZMIN, hz / 9, 9 * NZ
+        )
         level2 += 26 * len(footprint3) * len(layers3)  # a cavity is all rock
     return (
         f_domain * NX * NY * NZ
@@ -363,12 +366,11 @@ def build_refined_grid(
     # in the finer grid, less two cells at each end.
     NX3, NY3, NZ3 = NX * 9, NY * 9, NZ * 9
     h3, hz3 = h_xy / 9, hz / 9
-    margin = 2 * hxf  # two level-2 cells of room around the surface itself
     for name, bbox in (around or {}).items():
         box = (
-            bbox[0] - margin, bbox[1] + margin,
-            bbox[2] - margin, bbox[3] + margin,
-            bbox[4] - margin, bbox[5] + margin,
+            *scale_interval(bbox[0], bbox[1], AROUND_SCALE),
+            *scale_interval(bbox[2], bbox[3], AROUND_SCALE),
+            *scale_interval(bbox[4], bbox[5], AROUND_SCALE),
         )
         footprint3 = footprint_from_region(XMIN, YMIN, h3, h3, NX3, NY3, *box[:4])
         if not footprint3:
@@ -399,7 +401,8 @@ def build_refined_grid(
             NX3, NY3, NZ3, LX0, LY0, LZ0, cell_size=(h3, h3, hz3),
         )
         print(
-            f"[level 3] around {name}: {len(footprint3)} footprint cells x {len(k_layers3)} "
+            f"[level 3] around {name}: x=[{box[0]:.1f},{box[1]:.1f}] y=[{box[2]:.1f},{box[3]:.1f}] "
+            f"z=[{box[4]:.1f},{box[5]:.1f}], {len(footprint3)} footprint cells x {len(k_layers3)} "
             f"layers (k {k_layers3[0]}..{k_layers3[-1]}), cells of {h3 / 3:.2f} m -> "
             f"{len(hexes):,} hexes, "
             f"peak memory {peak_memory_gb():.2f} GB",
