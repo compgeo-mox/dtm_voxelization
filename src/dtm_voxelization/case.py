@@ -14,12 +14,17 @@ import numpy as np
 @dataclass(frozen=True)
 class Surface:
     """A fracture surface: an STL plus the translation into the DTM's frame,
-    or the corners of a polygon given directly in that frame."""
+    or the corners of a polygon given directly in that frame.
+
+    `remove_detached`: throw away whatever this surface cuts loose -- the rock
+    above a cavity, say. Off by default, because a surface that cuts a tower
+    free has cut free the very thing the case is about."""
 
     name: str
     stl: Path | None
     translation: tuple
     corners: np.ndarray | None
+    remove_detached: bool
 
 
 @dataclass(frozen=True)
@@ -65,9 +70,9 @@ class Case:
         return self.output / "detached.vtu"
 
     @property
-    def sealed_path(self):
-        """How many cut faces the detachment left sealed, for speed to expect."""
-        return self.output / "sealed_cut_faces.npz"
+    def detach_summary_path(self):
+        """How many twin pairs the detachment left behind, for speed to expect."""
+        return self.output / "detach_summary.npz"
 
     @property
     def speed_dir(self):
@@ -126,7 +131,10 @@ def load_case(path):
     surfaces = []
     for i, entry in enumerate(data.get("surfaces", [])):
         where = f"{path.name} [[surfaces]] #{i + 1}"
-        _check_keys(entry, {"name"}, {"stl", "translation", "corners"}, where)
+        _check_keys(
+            entry, {"name"}, {"stl", "translation", "corners", "remove_detached"}, where
+        )
+        remove_detached = bool(entry.get("remove_detached", False))
         if ("stl" in entry) == ("corners" in entry):
             raise ValueError(f"{where}: give exactly one of 'stl' or 'corners'")
         if "corners" in entry:
@@ -135,12 +143,16 @@ def load_case(path):
             corners = np.asarray(entry["corners"], dtype=float)
             if corners.ndim != 2 or corners.shape[1] != 3 or len(corners) < 3:
                 raise ValueError(f"{where}: corners must be at least 3 [x, y, z] points")
-            surfaces.append(Surface(entry["name"], None, (0.0, 0.0, 0.0), corners))
+            surfaces.append(
+                Surface(entry["name"], None, (0.0, 0.0, 0.0), corners, remove_detached)
+            )
         else:
             translation = tuple(float(t) for t in entry.get("translation", (0, 0, 0)))
             if len(translation) != 3:
                 raise ValueError(f"{where}: translation must be [dx, dy, dz]")
-            surfaces.append(Surface(entry["name"], root / entry["stl"], translation, None))
+            surfaces.append(
+                Surface(entry["name"], root / entry["stl"], translation, None, remove_detached)
+            )
 
     names = [s.name for s in surfaces]
     if len(set(names)) != len(names):

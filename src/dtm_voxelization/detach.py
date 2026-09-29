@@ -223,6 +223,58 @@ def check_split(new_hexes, faces, owners, cut_mask, copies):
         raise RuntimeError(f"{int((n_shared != 4).sum())} intact neighbour pairs came apart")
 
 
+def components(hexes, n_points):
+    """Which piece of the mesh each cell belongs to, cells sharing a node being
+    of one piece. Walked as a bipartite cell-node graph rather than a cell-cell
+    one: the adjacency product costs an order of magnitude more at real sizes,
+    for the same answer."""
+    n_cells = len(hexes)
+    rows = np.repeat(np.arange(n_cells), hexes.shape[1])
+    graph = coo_matrix(
+        (np.ones(hexes.size, dtype=np.int8), (rows, hexes.ravel() + n_cells)),
+        shape=(n_cells + n_points, n_cells + n_points),
+    )
+    return connected_components(graph, directed=False)[1][:n_cells]
+
+
+def prune(new_points, new_hexes, owners, masks, case, crack_cell, side_color):
+    """Drop what the surfaces marked `remove_detached` cut loose.
+
+    A surface cuts something loose when the cells on its two sides end up in
+    different pieces of the split mesh; what goes is every piece it touches but
+    the largest. Returns (hexes, cell arrays, keep) of the survivors. The
+    points are left alone, unused ones and all: grid.vtu already carries the
+    points of every hex the carving dropped, and renumbering here would throw
+    those away too -- a change to make deliberately or not at all."""
+    keep = np.ones(len(new_hexes), dtype=bool)
+    wanted = [s.name for s in case.surfaces if s.remove_detached]
+    if not wanted:
+        return new_hexes, crack_cell, side_color, keep
+
+    piece = components(new_hexes, len(new_points))
+    sizes = np.bincount(piece)
+    print(f"  the split mesh is in {len(sizes)} piece(s), the largest {sizes.max():,} cells")
+    for name in wanted:
+        here = np.unique(piece[np.unique(owners[masks[name]])])
+        if len(here) < 2:
+            print(
+                f"  {name}: cuts nothing loose -- both its sides are still the same piece, "
+                f"so there is nothing to remove",
+                flush=True,
+            )
+            continue
+        doomed = here[sizes[here] < sizes[here].max()]
+        print(
+            f"  {name}: touches {len(here)} pieces ({', '.join(f'{s:,}' for s in sizes[here])} "
+            f"cells), dropping {len(doomed)} of them, {int(sizes[doomed].sum()):,} cells",
+            flush=True,
+        )
+        keep &= ~np.isin(piece, doomed)
+
+    print(f"  {int((~keep).sum()):,} cells removed", flush=True)
+    return new_hexes[keep], crack_cell[keep], side_color[keep], keep
+
+
 def run(case):
     """Split grid.vtu along the cut faces of every surface -> detached.vtu."""
     require(case.grid_path, "grid")
@@ -231,10 +283,11 @@ def run(case):
     print(f"  grid {case.grid_path}: {len(hexes):,} hexes, {len(points):,} points", flush=True)
 
     cut_mask = np.zeros(len(faces), dtype=bool)
+    masks = {}
     for surface in case.surfaces:
         path = case.cut_dir / f"{surface.name}.npz"
         require(path, "cut")
-        mask = find_cut_faces(faces, np.load(path)["face_nodes"])
+        mask = masks[surface.name] = find_cut_faces(faces, np.load(path)["face_nodes"])
         print(
             f"  {surface.name}: {int(mask.sum()):,} cut faces, "
             f"{int((mask & cut_mask).sum()):,} of them already cut by an earlier surface",
@@ -247,7 +300,7 @@ def run(case):
     crack_cell = np.zeros(len(hexes))
     side_color = np.zeros(len(hexes))
     if n_cut == 0:
-        np.savez(case.sealed_path, sealed=0)
+        np.savez(case.detach_summary_path, twin_pairs=0)
         print("  nothing to split, writing the grid unchanged", flush=True)
         new_points, new_hexes, opening = points, hexes, np.zeros_like(points)
     else:
@@ -259,13 +312,6 @@ def run(case):
         )
         copies = face_copies(hexes, faces, owners, cut_mask, inc)
         check_split(new_hexes, faces, owners, cut_mask, copies)
-
-        # a cut face whose four nodes all stayed welded is still an internal
-        # face: it never becomes two boundary faces, and speed must not look
-        # for its twin
-        sealed = int((copies[0] == copies[1]).all(axis=1).sum())
-        np.savez(case.sealed_path, sealed=sealed)
-        print(f"  {sealed} of the cut faces stayed sealed, at the tips", flush=True)
 
         touched = np.unique(owners[cut_mask])
         welded = np.unique(copies[0][copies[0] == copies[1]])
@@ -281,6 +327,23 @@ def run(case):
             flush=True,
         )
         opening = build_opening(points, hexes, faces, owners, cut_mask, inc)
+        new_hexes, crack_cell, side_color, keep = prune(
+            new_points, new_hexes, owners, masks, case, crack_cell, side_color
+        )
+
+        # what speed should find: a cut face becomes a pair of boundary faces
+        # only if it opened -- one sealed at a tip stays internal -- and only if
+        # both the cells it separates are still here
+        sealed = (copies[0] == copies[1]).all(axis=1)
+        cut_owners = owners[cut_mask]
+        both_here = keep[cut_owners[:, 0]] & keep[cut_owners[:, 1]]
+        twin_pairs = int((~sealed & both_here).sum())
+        np.savez(case.detach_summary_path, twin_pairs=twin_pairs)
+        print(
+            f"  of {n_cut:,} cut faces, {int(sealed.sum()):,} stayed sealed at a tip and "
+            f"{int((~both_here).sum()):,} lost a side to the pruning: {twin_pairs:,} twin pairs",
+            flush=True,
+        )
 
     case.output.mkdir(parents=True, exist_ok=True)
     meshio.write_points_cells(

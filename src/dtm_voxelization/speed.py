@@ -24,8 +24,9 @@ face they already point outward. They are labelled by where they sit:
 Crack sides are still identified, as boundary faces with a geometrically
 coincident twin (only the detachment creates those), to check their number
 against the cut faces the detachment actually opened: the ones it sealed at a
-tip stay internal and have no twin, so it records how many in sealed_cut_faces
-and they are subtracted here.
+tip stay internal and have no twin, and neither has one whose far side was
+pruned away, so detach records in detach_summary.npz how many pairs it really
+left.
 
 Tags are decided in the grid's frame, where the domain is a box; the points
 are then mapped back to the DTM's frame for writing (see frame.py).
@@ -164,16 +165,16 @@ def run(case):
     )
 
     n_cut = count_cut_faces(case)
-    require(case.sealed_path, "detach")
-    sealed = int(np.load(case.sealed_path)["sealed"])
+    require(case.detach_summary_path, "detach")
+    twin_pairs = int(np.load(case.detach_summary_path)["twin_pairs"])
     print(
-        f"  cut faces over all surfaces: {n_cut:,}, of which {sealed:,} sealed at a tip "
-        f"and so still internal",
+        f"  cut faces over all surfaces: {n_cut:,}; the detachment opened {twin_pairs:,} "
+        f"of them into twin pairs",
         flush=True,
     )
-    if n_cut - sealed != int(crack.sum()) // 2:
+    if twin_pairs != int(crack.sum()) // 2:
         raise ValueError(
-            f"{int(crack.sum()) // 2} twin pairs but {n_cut} cut faces less {sealed} sealed -- "
+            f"{int(crack.sum()) // 2} twin pairs but the detachment reported {twin_pairs} -- "
             "detached.vtu and cut_faces/ come from different runs"
         )
 

@@ -56,3 +56,4 @@ stl = "../data/surfaces/polylines/Polyline_torrione4-5.stl"
 [[surfaces]]
 name = "cavita_torrione1"
 stl = "../data/surfaces/polylines/Polyline_contorno_cavità_torrione1.stl"
+remove_detached = true           # the rock this one cuts loose is the cavity itself
