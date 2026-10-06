@@ -1,9 +1,10 @@
 """The orthophoto draped over the terrain, to look at in ParaView, plus a
 downsampled copy of the photo itself:
 
-    python -m dtm_voxelization.orthophoto ORTHO.tif CASE.toml
+    python -m dtm_voxelization.orthophoto [ORTHO.tif CASE.toml]
 
-Both are written next to the photo. The colour -- rock, scree, trees -- is the
+Both are written next to the photo. With no arguments it takes PHOTO and CASE
+below, so the file runs from an editor as it does from the shell. The colour -- rock, scree, trees -- is the
 photo's; the shape is the case's DTM, which at Rialba has a 5 m step and so
 stays smooth under it, exactly as a satellite view is a sharp image on a soft
 terrain.
@@ -32,13 +33,25 @@ import rasterio
 from PIL import Image
 from rasterio.enums import Resampling
 
-from . import terrain as terrain_surfaces
-from .case import load_case
-from .dtm_io import interpolate_in_parallel
-from .shift_fracture import M  # the same Rialba mean
-from .terrain import compact_triangles, grid_triangles
+if __package__:
+    from . import terrain as terrain_surfaces
+    from .case import load_case
+    from .dtm_io import interpolate_in_parallel
+    from .shift_fracture import M  # the same Rialba mean
+    from .terrain import compact_triangles, grid_triangles
+else:  # run as a plain file, from an editor's Run button: no package around it
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from dtm_voxelization import terrain as terrain_surfaces
+    from dtm_voxelization.case import load_case
+    from dtm_voxelization.dtm_io import interpolate_in_parallel
+    from dtm_voxelization.shift_fracture import M
+    from dtm_voxelization.terrain import compact_triangles, grid_triangles
 
 TARGET_PIXELS = 8_000_000
+# what to work on when no argument is given, as from an editor's Run button;
+# both are resolved against the repository
+PHOTO = "../DTM_casi_studio/Realba_26_02_26/Ortofoto/OrtofotoRelba_5cm.tif"
+CASE = "cases/rialba.toml"
 
 
 def downsample(path):
@@ -100,10 +113,11 @@ def drape(rgba, transform, terrain):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 2:
+    if len(argv) not in (0, 2):
         raise SystemExit(__doc__)
-    photo_path = Path(argv[0]).resolve()
-    case = load_case(argv[1])
+    root = Path(__file__).resolve().parents[2]
+    photo_path = Path(argv[0] if argv else root / PHOTO).resolve()
+    case = load_case(argv[1] if argv else root / CASE)
     if case.surface != "height_field":
         raise SystemExit(
             f"{argv[1]}: surface is {case.surface!r}, draping needs a height field"
