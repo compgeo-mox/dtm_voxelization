@@ -42,7 +42,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from shapely.geometry import Polygon
+from rasterio.crs import CRS
+from rasterio.warp import transform
+from shapely.geometry import LineString, Polygon
 from shapely.geometry import box as rectangle
 from shapely.geometry.polygon import orient
 from vtkmodules.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray, vtk_to_numpy
@@ -56,20 +58,30 @@ if __package__:
     from .clean_stl import to_polydata
     from .fracture_surface import inside
     from .mesh import require
+    from .shift_fracture import M  # the same Rialba mean
     from .surfaces import in_grid_frame
+    from .terrain import grid_triangles
 else:  # run as a plain file, from an editor's Run button: no package around it
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from dtm_voxelization.case import load_case
     from dtm_voxelization.clean_stl import to_polydata
     from dtm_voxelization.fracture_surface import inside
     from dtm_voxelization.mesh import require
+    from dtm_voxelization.shift_fracture import M
     from dtm_voxelization.surfaces import in_grid_frame
+    from dtm_voxelization.terrain import grid_triangles
 
 CASE = "cases/rialba.toml"  # when none is given, as from an editor's Run button
 NOT_FRACTURES = ("cavita",)  # a cavity is a hole in the rock, not a fracture
 BOX = ((-300.0, -200.0), (150.0, 100.0))  # the 2D model's own window on the section
 SMOOTH_PASSES = 10  # Taubin pairs over the outline, enough to take the stairs off
 WEIGHTS = (0.5, -0.53)  # Taubin's: a step towards the neighbours, a wider one back
+# a surveyed plane, as 0.2230 X + 0.4732 Y - 0.8523 Z + d = 0 with d / -0.8523 given,
+# and a second one DROPS below it
+PLANE = (0.2230, 0.4732, -0.8523, 3.2214e06)
+PLANE_CRS = 3003  # Monte Mario / Italy zone 1, the Gauss-Boaga the plane was fitted in
+DROPS = (0.0, 20.0)
+SHEET = 20  # vertices a side of the sheet each plane is drawn as
 
 
 def fractures(case):
@@ -290,6 +302,86 @@ def onto_the_outline(polygon, line):
     return np.vstack([start + rise * step, line])
 
 
+def surveyed(points, drop):
+    """The surveyed plane's z, DROP metres lower, over the given x and y.
+
+    The plane was fitted in Monte Mario / Italy zone 1 (Gauss-Boaga), whose
+    easting runs a million metres ahead of UTM's, so x and y go back to UTM --
+    the grid's frame is UTM minus the cloud's mean M -- and on to Gauss-Boaga
+    before the equation is used. Taken in UTM instead it puts the plane 262 km
+    underground, which is that million metres times 0.2230 / 0.8523.
+
+    Its Z is an elevation above the sea, so the cloud's mean comes off it as
+    it does off everything else. That is how the whole Gauss-Boaga lineage of
+    this case is written -- Rialba_DTM2x2.txt, DTMRialba5m_4Cubit, the Cubit
+    pipeline's own local frame -- where x and y are shifted and z never is."""
+    a, b, c, offset = PLANE
+    east, north = transform(
+        CRS.from_epsg(32632),
+        CRS.from_epsg(PLANE_CRS),
+        points[:, 0] + M[0],
+        points[:, 1] + M[1],
+    )
+    return -(a / c * np.array(east) + b / c * np.array(north) + offset) - M[2] - drop
+
+
+def write_sheet(path, drop, bounds):
+    """One surveyed plane as a sheet over the mesh, to look at in ParaView.
+
+    It is drawn as a grid rather than a quad because the two map projections
+    are not quite parallel, so the plane is not quite flat in the grid's
+    frame."""
+    box = np.array(bounds).reshape(3, 2)
+    x, y = np.meshgrid(
+        np.linspace(*box[0], SHEET), np.linspace(*box[1], SHEET), indexing="ij"
+    )
+    points = np.column_stack([x.ravel(), y.ravel()])
+    sheet = np.column_stack([points, surveyed(points, drop)])
+    writer = vtkXMLPolyDataWriter()
+    writer.SetFileName(str(path))
+    writer.SetInputData(to_polydata(sheet, grid_triangles(SHEET, SHEET)))
+    if not writer.Write():
+        raise RuntimeError(f"vtkXMLPolyDataWriter failed on {path}")
+    print(
+        f"wrote {path.name}: the plane {drop:g} m down, z from {sheet[:, 2].min():.0f} to "
+        f"{sheet[:, 2].max():.0f} over the mesh"
+    )
+
+
+def on_the_section(drop, normal, origin, polygon):
+    """One surveyed plane's trace on the vertical plane, cut to the domain.
+
+    The two planes cross the vertical one along a straight line, so the trace
+    is read at the domain's own ends and then cut by the polygon, which leaves
+    it starting and ending ON the boundary, as the fractures do. It comes back
+    empty if the plane passes over the rock altogether."""
+    along = np.cross(normal, [0.0, 0.0, 1.0])
+    along /= np.linalg.norm(along)
+    reach = np.array([polygon[:, 0].min(), polygon[:, 0].max()])
+    at = origin[:2] + reach[:, None] * along[:2]
+    line = np.column_stack([reach, surveyed(at, drop) - origin[2]])
+
+    cut = LineString(line).intersection(Polygon(polygon))
+    if cut.is_empty:
+        print(
+            f"    the plane {drop:g} m down misses the domain: over it the trace runs from "
+            f"y = {line[0, 1]:.0f} to {line[1, 1]:.0f}, the rock from "
+            f"{polygon[:, 1].min():.0f} to {polygon[:, 1].max():.0f}"
+        )
+        return []
+    pieces = list(cut.geoms) if cut.geom_type == "MultiLineString" else [cut]
+    chains = []
+    for piece in pieces:
+        chain = np.array(piece.coords)
+        chains.append(chain[::-1] if chain[0, 1] < chain[-1, 1] else chain)
+    chains.sort(key=lambda chain: -chain[0, 1])
+    print(
+        f"    the plane {drop:g} m down crosses the domain in {len(chains)} piece(s), "
+        f"y from {chains[0][0, 1]:.1f} down to {chains[-1][-1, 1]:.1f}"
+    )
+    return chains
+
+
 def write_flat(path, chains):
     """Two columns of x and y for the model, and the same as lines to look at."""
     rows = np.vstack(chains)
@@ -428,6 +520,12 @@ def main(argv=None):
         )
         kept[0] = onto_the_outline(polygon, kept[0])
         write_flat(case.output / f"fracture_{surface.name}", kept)
+
+    for drop in DROPS:
+        write_sheet(case.output / f"plane_{drop:g}m.vtp", drop, reader.GetOutput().GetBounds())
+        chains = on_the_section(drop, normal, origin, polygon)
+        if chains:
+            write_flat(case.output / f"plane_{drop:g}m", chains)
 
 
 if __name__ == "__main__":
