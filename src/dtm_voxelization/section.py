@@ -67,7 +67,7 @@ else:  # run as a plain file, from an editor's Run button: no package around it
 
 CASE = "cases/rialba.toml"  # when none is given, as from an editor's Run button
 NOT_FRACTURES = ("cavita",)  # a cavity is a hole in the rock, not a fracture
-BOX = ((-200.0, -200.0), (150.0, 75.0))  # the 2D model's own window on the section
+BOX = ((-300.0, -200.0), (150.0, 100.0))  # the 2D model's own window on the section
 SMOOTH_PASSES = 10  # Taubin pairs over the outline, enough to take the stairs off
 WEIGHTS = (0.5, -0.53)  # Taubin's: a step towards the neighbours, a wider one back
 
