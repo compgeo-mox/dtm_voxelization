@@ -47,7 +47,7 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.shift_fracture import M
     from dtm_voxelization.terrain import compact_triangles, grid_triangles
 
-TARGET_PIXELS = 8_000_000
+TARGET_PIXELS = 2 * 8_000_000
 # what to work on when no argument is given, as from an editor's Run button;
 # both are resolved against the repository
 PHOTO = "../DTM_casi_studio/Realba_26_02_26/Ortofoto/OrtofotoRelba_5cm.tif"
