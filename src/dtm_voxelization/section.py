@@ -32,22 +32,28 @@ horizontal, y up -- as a flat drawing at z = 0:
 - fracture_<name>.txt / .vtp: one per fracture, points running from the top
   down, cut back to what falls inside the domain and carried up to meet it, so
   every fracture starts ON the boundary and not a stair short of it.
+- plane_<drop>m.txt / .vtp: the same, for each surveyed plane of PLANE and
+  DROPS, which crosses the section along a straight line.
 
 The .txt files are two columns, x and y, which is what a 2D model wants; the
 .vtp are the same points as lines, to look at. section.vtp, section_surfaces
-.vtp and section_plane.vtp keep the full 3D cut, in place.
+.vtp, section_plane.vtp and plane_<drop>m_sheet.vtp keep the full 3D: the cut
+of the mesh, of the fracture surfaces, the vertical plane it was all cut with,
+and the surveyed planes themselves, drawn over the mesh.
 """
 
 import sys
 from pathlib import Path
 
 import numpy as np
-from rasterio.crs import CRS
-from rasterio.warp import transform
 from shapely.geometry import LineString, Polygon
 from shapely.geometry import box as rectangle
 from shapely.geometry.polygon import orient
-from vtkmodules.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray, vtk_to_numpy
+from vtkmodules.util.numpy_support import (
+    numpy_to_vtk,
+    numpy_to_vtkIdTypeArray,
+    vtk_to_numpy,
+)
 from vtkmodules.vtkCommonCore import vtkPoints
 from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkPlane, vtkPolyData
 from vtkmodules.vtkFiltersCore import vtkCleanPolyData, vtkCutter
@@ -58,7 +64,7 @@ if __package__:
     from .clean_stl import to_polydata
     from .fracture_surface import inside
     from .mesh import require
-    from .shift_fracture import M  # the same Rialba mean
+    from .shift_fracture import M, S  # the same Rialba mean and software shift
     from .surfaces import in_grid_frame
     from .terrain import grid_triangles
 else:  # run as a plain file, from an editor's Run button: no package around it
@@ -67,7 +73,7 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.clean_stl import to_polydata
     from dtm_voxelization.fracture_surface import inside
     from dtm_voxelization.mesh import require
-    from dtm_voxelization.shift_fracture import M
+    from dtm_voxelization.shift_fracture import M, S
     from dtm_voxelization.surfaces import in_grid_frame
     from dtm_voxelization.terrain import grid_triangles
 
@@ -78,8 +84,10 @@ SMOOTH_PASSES = 10  # Taubin pairs over the outline, enough to take the stairs o
 WEIGHTS = (0.5, -0.53)  # Taubin's: a step towards the neighbours, a wider one back
 # a surveyed plane, as 0.2230 X + 0.4732 Y - 0.8523 Z + d = 0 with d / -0.8523 given,
 # and a second one DROPS below it
-PLANE = (0.2230, 0.4732, -0.8523, 3.2214e06)
-PLANE_CRS = 3003  # Monte Mario / Italy zone 1, the Gauss-Boaga the plane was fitted in
+PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
+# the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
+# topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
+GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
 DROPS = (0.0, 20.0)
 SHEET = 20  # vertices a side of the sheet each plane is drawn as
 
@@ -104,12 +112,16 @@ def through_the_fractures(case, surfaces):
         area = np.linalg.norm(cross, axis=1) / 2
         centres.append((tri.mean(axis=1) * area[:, None]).sum(axis=0) / area.sum())
         # the area-weighted mean normal describes the fracture's own attitude
-        mean = (cross / np.linalg.norm(cross, axis=1, keepdims=True) * area[:, None]).sum(axis=0)
+        mean = (
+            cross / np.linalg.norm(cross, axis=1, keepdims=True) * area[:, None]
+        ).sum(axis=0)
         normals.append(mean / np.linalg.norm(mean))
     centres, normals = np.array(centres), np.array(normals)
 
     origin = centres.mean(axis=0)
-    spread, directions = np.linalg.eigh(np.cov((centres[:, :2] - origin[:2]).T, bias=True))
+    spread, directions = np.linalg.eigh(
+        np.cov((centres[:, :2] - origin[:2]).T, bias=True)
+    )
     normal = np.array([*directions[:, 0], 0.0])  # horizontal: the plane is vertical
     print(
         f"  the fractures' centres spread {np.sqrt(spread[1]):.0f} m along the plane and "
@@ -127,7 +139,9 @@ def through_the_fractures(case, surfaces):
 def flatten(points, normal, origin):
     """The plane's own coordinates: x along it and horizontal, y up."""
     along = np.cross(normal, [0.0, 0.0, 1.0])
-    return (points - origin) @ np.column_stack([along / np.linalg.norm(along), [0, 0, 1.0]])
+    return (points - origin) @ np.column_stack(
+        [along / np.linalg.norm(along), [0, 0, 1.0]]
+    )
 
 
 def loops_of(edges):
@@ -159,7 +173,9 @@ def outline(points, polygons):
     and wound counter-clockwise. The longest chain is the outline itself; the
     others are the holes the cracks and the carving leave."""
     edges = np.vstack([np.column_stack([p, np.roll(p, -1)]) for p in polygons])
-    _, first, counts = np.unique(np.sort(edges, axis=1), axis=0, return_index=True, return_counts=True)
+    _, first, counts = np.unique(
+        np.sort(edges, axis=1), axis=0, return_index=True, return_counts=True
+    )
     rim = edges[first[counts == 1]]
     chains = sorted(loops_of(rim), key=len, reverse=True)
     print(
@@ -191,11 +207,16 @@ def from_the_top(points, segments):
     while chains:
         tail = points[line[-1]]
         reach = [
-            min(np.linalg.norm(points[chain[0]] - tail), np.linalg.norm(points[chain[-1]] - tail))
+            min(
+                np.linalg.norm(points[chain[0]] - tail),
+                np.linalg.norm(points[chain[-1]] - tail),
+            )
             for chain in chains
         ]
         chain = chains.pop(int(np.argmin(reach)))
-        if np.linalg.norm(points[chain[-1]] - tail) < np.linalg.norm(points[chain[0]] - tail):
+        if np.linalg.norm(points[chain[-1]] - tail) < np.linalg.norm(
+            points[chain[0]] - tail
+        ):
             chain = chain[::-1]
         jumps.append(min(reach))
         line += chain[1:] if np.allclose(points[chain[0]], tail) else chain
@@ -220,7 +241,9 @@ def smooth(loop):
     """
     keep = np.append(np.linalg.norm(np.diff(loop, axis=0), axis=1) > 1e-6, True)
     if not keep.all():
-        print(f"  dropping {(~keep).sum()} outline points the cut left on top of each other")
+        print(
+            f"  dropping {(~keep).sum()} outline points the cut left on top of each other"
+        )
     loop = loop[keep]
 
     lo, hi = loop.min(axis=0), loop.max(axis=0)
@@ -270,7 +293,9 @@ def clip(loop, corners):
         )
         cut = pieces[0]
     if cut.interiors:
-        print(f"  leaving out {len(cut.interiors)} hole(s) the carving opened inside the box")
+        print(
+            f"  leaving out {len(cut.interiors)} hole(s) the carving opened inside the box"
+        )
     out = np.array(orient(Polygon(cut.exterior)).exterior.coords)[:-1]
     print(
         f"  clipped to x {x0:g} .. {x1:g}, y {y0:g} .. {y1:g}: {len(out):,} points, "
@@ -296,7 +321,9 @@ def onto_the_outline(polygon, line):
         s = (gap[:, 0] * step[1] - gap[:, 1] * step[0]) / denominator
     hit = (denominator != 0) & (t > 0) & (s >= 0) & (s <= 1)
     if not hit.any():
-        raise ValueError("the fracture's top segment, produced upwards, misses the outline")
+        raise ValueError(
+            "the fracture's top segment, produced upwards, misses the outline"
+        )
     rise = t[hit].min()
     print(f"    carried up {rise * np.linalg.norm(step):.2f} m to end on the outline")
     return np.vstack([start + rise * step, line])
@@ -306,23 +333,29 @@ def surveyed(points, drop):
     """The surveyed plane's z, DROP metres lower, over the given x and y.
 
     The plane was fitted in Monte Mario / Italy zone 1 (Gauss-Boaga), whose
-    easting runs a million metres ahead of UTM's, so x and y go back to UTM --
-    the grid's frame is UTM minus the cloud's mean M -- and on to Gauss-Boaga
-    before the equation is used. Taken in UTM instead it puts the plane 262 km
-    underground, which is that million metres times 0.2230 / 0.8523.
+    easting runs a million metres ahead of UTM's: read in UTM the equation puts
+    the plane 262 km underground, that million times 0.2230 / 0.8523. The shift
+    that carries the grid there is the SPEED scripts' own for the full Rialba,
+    the one turning frattura_verticale.stl into the shifted copy this repo
+    carries; reprojecting the origin properly lands 2.5 m from it in x and 3 cm
+    in y, which is 0.7 m of z and not worth a dependency.
 
-    Its Z is an elevation above the sea, so the cloud's mean comes off it as
-    it does off everything else. That is how the whole Gauss-Boaga lineage of
-    this case is written -- Rialba_DTM2x2.txt, DTMRialba5m_4Cubit, the Cubit
-    pipeline's own local frame -- where x and y are shifted and z never is."""
+    Only, the data the plane was fitted on had been shifted by the software's
+    own S first and that Gauss-Boaga shift put back on top -- the two are mixed
+    in the SPEED scripts' merge_dtm.py, under a comment that already doubts
+    them -- so M + S goes on again here. It is worth 0.2230 / 0.8523 times
+    837 m of easting plus 0.4732 / 0.8523 times 191 m of northing, 325 m of
+    elevation: without it the plane runs 399 m under the terrain everywhere,
+    with it 73 m under on average and crossing it, which is a plane a mountain
+    can have.
+
+    Its Z is an elevation above the sea, so the cloud's mean comes off it as it
+    does off everything else. That is how the whole Gauss-Boaga lineage of this
+    case is written -- frattura_verticale.stl, Rialba_DTM2x2.txt,
+    DTMRialba5m_4Cubit -- where x and y are shifted and z never is."""
     a, b, c, offset = PLANE
-    east, north = transform(
-        CRS.from_epsg(32632),
-        CRS.from_epsg(PLANE_CRS),
-        points[:, 0] + M[0],
-        points[:, 1] + M[1],
-    )
-    return -(a / c * np.array(east) + b / c * np.array(north) + offset) - M[2] - drop
+    here = points + GAUSS_BOAGA + (M[:2] + S[:2])
+    return -(a / c * here[:, 0] + b / c * here[:, 1] + offset) - M[2] - drop
 
 
 def write_sheet(path, drop, bounds):
@@ -397,7 +430,9 @@ def write_flat(path, chains):
     vtk_points.SetData(numpy_to_vtk(np.ascontiguousarray(flat), deep=True))
     cells = vtkCellArray()
     cells.SetData(
-        numpy_to_vtkIdTypeArray(np.arange(0, 2 * len(lines) + 1, 2, dtype=np.int64), deep=True),
+        numpy_to_vtkIdTypeArray(
+            np.arange(0, 2 * len(lines) + 1, 2, dtype=np.int64), deep=True
+        ),
         numpy_to_vtkIdTypeArray(np.array(lines, dtype=np.int64).ravel(), deep=True),
     )
     mesh.SetPoints(vtk_points)
@@ -460,7 +495,9 @@ def cut(data, plane, path=None):
         writer.SetCompressorTypeToLZ4()
         if not writer.Write():
             raise RuntimeError(f"vtkXMLPolyDataWriter failed on {path}")
-        print(f"wrote {path}: {out.GetNumberOfCells():,} cells, {out.GetNumberOfPoints():,} points")
+        print(
+            f"wrote {path}: {out.GetNumberOfCells():,} cells, {out.GetNumberOfPoints():,} points"
+        )
     return out
 
 
@@ -496,7 +533,12 @@ def main(argv=None):
     reader.Update()
     print(f"  cutting {mesh}: {reader.GetOutput().GetNumberOfCells():,} cells")
     section = cut(reader.GetOutput(), plane, case.output / "section.vtp")
-    write_plane(case.output / "section_plane.vtp", normal, origin, reader.GetOutput().GetBounds())
+    write_plane(
+        case.output / "section_plane.vtp",
+        normal,
+        origin,
+        reader.GetOutput().GetBounds(),
+    )
 
     flat = flatten(vtk_to_numpy(section.GetPoints().GetData()), normal, origin)
     rim = outline(flat, cells_of(section, "polys"))
@@ -522,7 +564,9 @@ def main(argv=None):
         write_flat(case.output / f"fracture_{surface.name}", kept)
 
     for drop in DROPS:
-        write_sheet(case.output / f"plane_{drop:g}m.vtp", drop, reader.GetOutput().GetBounds())
+        write_sheet(
+            case.output / f"plane_{drop:g}m_sheet.vtp", drop, reader.GetOutput().GetBounds()
+        )
         chains = on_the_section(drop, normal, origin, polygon)
         if chains:
             write_flat(case.output / f"plane_{drop:g}m", chains)
