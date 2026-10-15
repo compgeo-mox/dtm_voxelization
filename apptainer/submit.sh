@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Submit a PBS job that runs one command inside the dtm_voxelization
+# image through apptainer/run.sh, on one node with ncpus free cores.
+#
+#     apptainer/submit.sh [run.sh options] [--] command ...
+#     apptainer/submit.sh dtm-voxelization cases/rialba.toml speed
+#     apptainer/submit.sh -o /scratch/$USER/run1 -- dtm-voxelization cases/rialba.toml speed
+#
+# The arguments go to apptainer/run.sh unchanged, so relative paths in the
+# command are relative to the repository (/workspace in the container), and
+# relative paths in the options are relative to the folder you submit from.
+# The environment at submission (APPTAINER_BIN, DTM_IMAGE, DTM_OUTPUT, ...) is
+# exported to the job (qsub -V). The job log, stdout and stderr together, is
+# written to logs/ in the repository.
+# Resources: DTM_NCPUS (default 32) and DTM_MEM_GB, memory in gigabytes
+# (default 64), e.g. DTM_MEM_GB=128 DTM_NCPUS=16 apptainer/submit.sh ...
+
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo=$(cd "${here}/.." && pwd)
+
+case "${1:-}" in
+    -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "")        echo "no command given" >&2; exit 1 ;;
+esac
+
+logs="${repo}/logs"
+mkdir -p "${logs}"
+
+# the job starts in the home directory: go back to the submission folder
+job="cd $(printf '%q' "${PWD}") && $(printf '%q ' "${here}/run.sh" "$@")"
+
+ncpus="${DTM_NCPUS:-32}"
+mem_gb="${DTM_MEM_GB:-64}"
+
+echo "job:  ${job}"
+echo "logs: ${logs}"
+echo "resources: ncpus=${ncpus}, mem=${mem_gb} GB"
+echo "${job}" | qsub -V -N dtm_voxelization -l "select=1:ncpus=${ncpus}:mem=${mem_gb}gb" -j oe -o "${logs}/"
