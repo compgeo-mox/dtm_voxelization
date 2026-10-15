@@ -11,7 +11,7 @@
 # relative paths in the options are relative to the folder you submit from.
 # The environment at submission (APPTAINER_BIN, DTM_IMAGE, DTM_OUTPUT, ...) is
 # exported to the job (qsub -V). The job log, stdout and stderr together, is
-# written to logs/ in the repository.
+# written to logs/dtm_voxelization.<jobid>.log in the repository.
 # Resources: DTM_NCPUS (default 32) and DTM_MEM_GB, memory in gigabytes
 # (default 64), e.g. DTM_MEM_GB=128 DTM_NCPUS=16 apptainer/submit.sh ...
 
@@ -28,13 +28,16 @@ esac
 logs="${repo}/logs"
 mkdir -p "${logs}"
 
-# the job starts in the home directory: go back to the submission folder
-job="cd $(printf '%q' "${PWD}") && $(printf '%q ' "${here}/run.sh" "$@")"
+# the job writes its own log (stdout and stderr) straight into logs/, so PBS
+# does not have to copy a spool file back at the end; PBS_JOBID is expanded
+# when the job runs. The job also starts in the home directory: go back to the
+# submission folder
+job="exec > $(printf '%q' "${logs}")/dtm_voxelization.\${PBS_JOBID}.log 2>&1; cd $(printf '%q' "${PWD}") && $(printf '%q ' "${here}/run.sh" "$@")"
 
 ncpus="${DTM_NCPUS:-32}"
 mem_gb="${DTM_MEM_GB:-64}"
 
 echo "job:  ${job}"
-echo "logs: ${logs}"
+echo "log:  ${logs}/dtm_voxelization.<jobid>.log"
 echo "resources: ncpus=${ncpus}, mem=${mem_gb} GB"
-echo "${job}" | qsub -V -N dtm_voxelization -l "select=1:ncpus=${ncpus}:mem=${mem_gb}gb" -j oe -o "${logs}/"
+echo "${job}" | qsub -V -N dtm_voxelization -l "select=1:ncpus=${ncpus}:mem=${mem_gb}gb" -j oe -o /dev/null
