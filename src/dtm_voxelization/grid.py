@@ -590,8 +590,8 @@ def source_box(case, terrain, around):
     points. In z it reaches from under the terrain over it to over it, by the
     same margin a level-2 region takes.
 
-    What comes back is the box BEFORE the AROUND_SCALE every level-3 box is
-    grown by, so that what the grid ends up with is the box asked for."""
+    What comes back is the box itself: the caller takes AROUND_SCALE off it,
+    since every level-3 box is grown by that much before use."""
     survey = np.loadtxt(case.source_points, delimiter=",", skiprows=1, usecols=(1, 2))
     middle = survey.mean(axis=0) - M[:2]
     others = np.array([[(b[0] + b[1]) / 2, (b[2] + b[3]) / 2] for b in around.values()])
@@ -609,22 +609,13 @@ def source_box(case, terrain, around):
         f"x=[{box[0]:.1f},{box[1]:.1f}] y=[{box[2]:.1f},{box[3]:.1f}], terrain over it "
         f"{under:.1f} to {above:.1f}"
     )
-    return (
-        *scale_interval(box[0], box[1], 1 / AROUND_SCALE),
-        *scale_interval(box[2], box[3], 1 / AROUND_SCALE),
-        *scale_interval(
-            under - case.region_z_padding, above + case.region_z_padding, 1 / AROUND_SCALE
-        ),
-    )
+    return (*box, under - case.region_z_padding, above + case.region_z_padding)
 
 
-def run(case):
-    """Build the refined carved grid of the case's DTM -> grid.vtu, frame.npz,
-    dtm_surface.stl, all in the grid's frame."""
-    terrain, rotation, center = terrain_surfaces.build(case)
-    # the surfaces the case wants a further split around, as the box they
-    # occupy in the grid's frame; the margin is added per build, once the cell
-    # size is known
+def around_boxes(case, rotation, center):
+    """The surfaces the case wants a further split around, as the box each one
+    occupies in the grid's frame. The margin is added per build, once the cell
+    size is known."""
     around = {}
     for surface in case.surfaces:
         if surface.refine_around:
@@ -637,8 +628,23 @@ def run(case):
                 f"refining around {surface.name}: x=[{lo[0]:.1f},{hi[0]:.1f}] "
                 f"y=[{lo[1]:.1f},{hi[1]:.1f}] z=[{lo[2]:.1f},{hi[2]:.1f}]"
             )
+    return around
+
+
+def run(case):
+    """Build the refined carved grid of the case's DTM -> grid.vtu, frame.npz,
+    dtm_surface.stl, all in the grid's frame."""
+    terrain, rotation, center = terrain_surfaces.build(case)
+    around = around_boxes(case, rotation, center)
     if case.source_points is not None:
-        around[SOURCE] = source_box(case, terrain, around)
+        box = source_box(case, terrain, around)
+        # every box here is grown by AROUND_SCALE before use: take it off now,
+        # so the grid refines exactly the box that was asked for
+        around[SOURCE] = (
+            *scale_interval(box[0], box[1], 1 / AROUND_SCALE),
+            *scale_interval(box[2], box[3], 1 / AROUND_SCALE),
+            *scale_interval(box[4], box[5], 1 / AROUND_SCALE),
+        )
     print(f"terrain ready, peak memory {peak_memory_gb():.2f} GB", flush=True)
     case.output.mkdir(parents=True, exist_ok=True)
     frame.save(case.frame_path, rotation, center)
