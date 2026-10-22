@@ -17,6 +17,9 @@
 #   DTM_IMAGE       image to use
 #   DTM_OUTPUT      host folder to expose as /workspace/output
 #   DTM_DATA        host folder to expose as /workspace/data
+#   DTM_THREADS     threads of the OpenMP, OpenBLAS and MKL libraries; unset,
+#                   they take every core they can see, which under PBS is the
+#                   whole node and not the cores the job was given
 #
 # Runs with --containall --no-home --writable-tmpfs: nothing of the host is
 # visible except the binds, and writes inside the image itself land in a
@@ -27,7 +30,7 @@
 # your interactive shell.
 
 dtm_shell() {
-    local here repo image output data apptainer_bin bind
+    local here repo image output data apptainer_bin bind threads
     local -a extra_binds=() binds=() bind_args=() isolation=()
 
     here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,6 +39,7 @@ dtm_shell() {
     image="${DTM_IMAGE:-${here}/dtm_voxelization.sif}"
     output="${DTM_OUTPUT:-${repo}/output}"
     data="${DTM_DATA:-${repo}/data}"
+    threads="${DTM_THREADS:-}"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -89,8 +93,19 @@ dtm_shell() {
     echo "data:    ${data} -> /workspace/data"
 
     # --containall implies --cleanenv, which is what keeps the host's python
-    # environment (pyenv, PYTHONPATH, conda) from shadowing the image's own
+    # environment (pyenv, PYTHONPATH, conda) from shadowing the image's own --
+    # and also drops the thread counts, so they are passed back in by hand
     isolation=(--containall --no-home --writable-tmpfs --pwd /workspace)
+    if [ -n "${threads}" ]; then
+        isolation+=(
+            --env "OMP_NUM_THREADS=${threads}"
+            --env "OPENBLAS_NUM_THREADS=${threads}"
+            --env "MKL_NUM_THREADS=${threads}"
+        )
+        echo "threads: ${threads} (OpenMP, OpenBLAS, MKL)"
+    else
+        echo "threads: library defaults, all the cores visible"
+    fi
 
     if [ $# -eq 0 ]; then
         "${apptainer_bin}" shell "${isolation[@]}" "${bind_args[@]}" "${image}"

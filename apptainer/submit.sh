@@ -14,6 +14,8 @@
 # written to logs/dtm_voxelization.<jobid>.log in the repository.
 # Resources: DTM_NCPUS (default 32) and DTM_MEM_GB, memory in gigabytes
 # (default 64), e.g. DTM_MEM_GB=128 DTM_NCPUS=16 apptainer/submit.sh ...
+# PBS does not confine the job to its cores, so the threads of the libraries
+# (DTM_THREADS, see apptainer/shell.sh) are set to DTM_NCPUS unless given.
 
 set -euo pipefail
 
@@ -35,9 +37,10 @@ mkdir -p "${logs}"
 job="exec > $(printf '%q' "${logs}")/dtm_voxelization.\${PBS_JOBID}.log 2>&1; cd $(printf '%q' "${PWD}") && $(printf '%q ' "${here}/run.sh" "$@")"
 
 ncpus="${DTM_NCPUS:-32}"
+export DTM_THREADS="${DTM_THREADS:-${ncpus}}"
 mem_gb="${DTM_MEM_GB:-64}"
 
 echo "job:  ${job}"
 echo "log:  ${logs}/dtm_voxelization.<jobid>.log"
-echo "resources: ncpus=${ncpus}, mem=${mem_gb} GB"
+echo "resources: ncpus=${ncpus}, mem=${mem_gb} GB, threads=${DTM_THREADS}"
 echo "${job}" | qsub -V -N dtm_voxelization -l "select=1:ncpus=${ncpus}:mem=${mem_gb}gb" -j oe -o /dev/null
