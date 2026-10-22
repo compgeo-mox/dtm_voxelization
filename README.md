@@ -212,9 +212,10 @@ wound outward; both are checked before writing. Quad tags, for the `.mate`
 file: `2` lateral and bottom faces (bounding-box planes), `3` everything else
 on the boundary -- the carved terrain and both sides of every crack. Hexes are
 labelled by the two surveyed planes (see [`planes.py`](src/dtm_voxelization/planes.py)):
-`1` over the upper one, `4` between them, `5` under the lower one, and `6` for
-the part of `1` that also stands inside the case's `conglomerate` outline
-(`data/regions/`, X Y Z in UTM32N with the z unused) -- SPEED reads quad and
+`5` under the lower one, `6` over the upper one and inside the case's
+`conglomerate` outline (`data/regions/`, X Y Z in UTM32N with the z unused),
+`1` all the rest -- the upper plane only cuts the conglomerate out, the rock
+over it and the rock between the two being the same -- SPEED reads quad and
 hex labels out of the same column, which is why they do not share numbers. The
 label rides on `grid.vtu`, `detached.vtu` and `source_mesh.vtu` as the cell
 array `material`, and on `speed/<case>_materials.vtu` for the exported mesh. Tags are decided in the grid's frame; the mesh is written back

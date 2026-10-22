@@ -15,8 +15,8 @@ columns, and the floor is flat, at the bottom of the level-3 block.
 
 The labels are speed.py's own, so a .mate written for the big mesh works here:
 LATERAL_BOTTOM_TAG on the four sides and the floor, TOP_TAG on the carved top,
-and the hexes split by the two surveyed planes into ABOVE_TAG, BETWEEN_TAG and
-BELOW_TAG.
+and the hexes labelled by the two surveyed planes, ROCK_TAG down to the lower
+one and BELOW_TAG under it.
 
 Needs the `grid` step run first. Writes source_mesh.vtu next to the case's
 output, with the material tag on it to look at, and

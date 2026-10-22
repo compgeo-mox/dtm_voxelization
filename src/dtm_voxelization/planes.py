@@ -20,12 +20,11 @@ PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
 # the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
 # topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
 GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
-# the rock in three, by the planes, and a fourth for the conglomerate. SPEED
-# reads quad and hex labels out of one column and speed.py spends 2 and 3 on
-# the boundary, so these carry on from there; 1 stays what the whole mesh used
-# to be, the rock over the planes
-ABOVE_TAG = 1
-BETWEEN_TAG = 4
+# the rock in three. SPEED reads quad and hex labels out of one column and
+# speed.py spends 2 and 3 on the boundary, so these keep clear of them; 1 is
+# what the whole mesh used to carry, and 4 was the rock between the planes
+# until it turned out to be the same stuff as the rock over them
+ROCK_TAG = 1  # everything down to the lower plane, the conglomerate apart
 BELOW_TAG = 5
 CONGLOMERATE_TAG = 6  # of the rock over the upper plane, the part inside the outline
 CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
@@ -133,9 +132,10 @@ def within(outline, points):
 
 def materials(case, points, hexes):
     """Each hex labelled by where it falls against the two surveyed planes:
-    ABOVE_TAG over the upper one, BETWEEN_TAG between them, BELOW_TAG under the
-    lower one, and CONGLOMERATE_TAG for the part of the first that also stands
-    inside the case's conglomerate outline. A hex goes by its centre, so the
+    BELOW_TAG under the lower one, CONGLOMERATE_TAG over the upper one and
+    inside the case's conglomerate outline, ROCK_TAG for all the rest. The
+    upper plane therefore only cuts the conglomerate out of the rest; above it
+    and between the two is one material. A hex goes by its centre, so the
     planes and the outline cut along cell faces -- they are not conformed to,
     which at a metre of cell is a metre of error on surfaces known to far less
     than that."""
@@ -143,13 +143,11 @@ def materials(case, points, hexes):
     sink = under_the_slope(case)
     upper = surveyed(middles[:, :2], sink + DROPS[0])
     lower = surveyed(middles[:, :2], sink + DROPS[1])
-    tags = np.full(len(hexes), BETWEEN_TAG)
+    tags = np.full(len(hexes), ROCK_TAG)
     over = middles[:, 2] > upper
-    tags[over] = ABOVE_TAG
     tags[middles[:, 2] < lower] = BELOW_TAG
 
-    labels = [(ABOVE_TAG, "over the upper plane"), (BETWEEN_TAG, "between them"),
-              (BELOW_TAG, "under the lower plane")]
+    labels = [(ROCK_TAG, "down to the lower plane"), (BELOW_TAG, "under the lower plane")]
     if case.conglomerate is not None:
         # X Y Z in UTM32N, the z of no use here: the outline is a footprint
         outline = np.loadtxt(case.conglomerate, skiprows=1, usecols=(0, 1)) - M[:2]
@@ -162,7 +160,7 @@ def materials(case, points, hexes):
             flush=True,
         )
         tags[over & within(outline, middles[:, :2])] = CONGLOMERATE_TAG
-        labels.append((CONGLOMERATE_TAG, "over it and inside the conglomerate"))
+        labels.append((CONGLOMERATE_TAG, "over the upper plane and in the conglomerate"))
     for tag, label in labels:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} hexes", flush=True)
     return tags
