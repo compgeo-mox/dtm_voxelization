@@ -22,10 +22,13 @@ z_padding = 50.0                 # domain below the lowest and above the highest
 # template, and the build refuses it.
 inner_regions = [
     # one rectangle over the towers, the fracture (x [-192,-123], y [227,267])
-    # and the source points (x [-286,-242], y [-79,-39]), so the fine mesh runs
-    # unbroken between them and its outline has no reentrant corner at all
-    [-310.0,  20.0, -103.0, 440.0],
+    # and the box around the source points (x [-315,-215], y [-110,-10]), so
+    # the fine mesh runs unbroken between them and its outline has no reentrant
+    # corner at all. It has to hold that box with room to spare: a level-3 call
+    # must nest in one level-2 region, footprint and all
+    [-400.0,  20.0, -200.0, 440.0],
 ]
+source_points = "../data/source_pts/rialba_source_pts.txt"  # refine around them as well
 region_z_padding = 20.0          # clearance above and below the terrain inside each
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
                                  # never less than 1.5 coarse cells wider in x and y

@@ -47,6 +47,7 @@ class Case:
     inner_regions: tuple  # one or more (xmin, xmax, ymin, ymax) rectangles
     region_z_padding: float
     outer_scale: float
+    source_points: Path | None  # survey to refine around, "Est,Nord" in UTM32N
     validate_mesh: bool
     surfaces: tuple
 
@@ -126,7 +127,7 @@ def load_case(path):
         "outer_scale",
         "validate_mesh",
     }
-    _check_keys(grid, grid_keys, set(), f"{path.name} [grid]")
+    _check_keys(grid, grid_keys, {"source_points"}, f"{path.name} [grid]")
     regions = grid["inner_regions"]
     if not regions or any(len(r) != 4 for r in regions):
         raise ValueError(
@@ -178,6 +179,7 @@ def load_case(path):
         inner_regions=tuple(tuple(float(v) for v in r) for r in regions),
         region_z_padding=float(grid["region_z_padding"]),
         outer_scale=float(grid["outer_scale"]),
+        source_points=root / grid["source_points"] if "source_points" in grid else None,
         validate_mesh=bool(grid["validate_mesh"]),
         surfaces=tuple(surfaces),
     )

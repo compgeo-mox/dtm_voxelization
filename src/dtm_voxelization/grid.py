@@ -55,10 +55,14 @@ from . import templates as T
 from . import terrain as terrain_surfaces
 from .geometry_checks import check_conformity_3d, hex_volumes_signed
 from .mesh import peak_memory_gb
+from .shift_fracture import M  # the same Rialba mean
 from .surfaces import triangles as surface_triangles
 
 CLEARANCE = 3  # free cells a refinement call needs from the next one (measured)
 AROUND_SCALE = 1.2  # a `refine_around` surface's own box, grown by this much
+SOURCE = "the source points"  # the name its level-3 box goes under
+SOURCE_BACK = 50.0  # m the box reaches from the points' middle, away from the fractures
+SOURCE_REACH = 100.0  # m it reaches the other way, towards them
 SIZE_TOLERANCE = 0.3  # accept the first cell_edge landing within +/-30% of target_cells
 MAX_ITERATIONS = 3
 PRESIZE_ITERATIONS = 30
@@ -437,8 +441,11 @@ def build_refined_grid(
         )
         for name, bbox in (around or {}).items()
     }
+    # the source points stand 300 m below the fractures and far from them: their
+    # box is its own island, neither bridged to the chain nor merged into it
+    island = {name: grown.pop(name) for name in (SOURCE,) if name in grown}
     boxes = {}
-    for name, box in list(grown.items()) + bridges(grown, h3):
+    for name, box in list(grown.items()) + bridges(grown, h3) + list(island.items()):
         footprint3 = blocked_footprint(XMIN, YMIN, h3, NX3, NY3, box)
         if not footprint3:
             raise ValueError(f"the box around {name} covers no level-2-child cell centre")
@@ -472,14 +479,15 @@ def build_refined_grid(
     # outright also gives every one of them the same vertical reach, down to
     # the foot of the lowest, which is what makes the fine zone one connected
     # body rather than a fine patch per fracture.
-    if groups3:
+    chain = [group for group in groups3 if SOURCE not in group["members"]]
+    if chain:
         groups3 = [
             as_group(
-                [name for group in groups3 for name in group["members"]],
-                set().union(*(group["fp"] for group in groups3)),
-                [min(g["klo"] for g in groups3), max(g["khi"] for g in groups3)],
+                [name for group in chain for name in group["members"]],
+                set().union(*(group["fp"] for group in chain)),
+                [min(g["klo"] for g in chain), max(g["khi"] for g in chain)],
             )
-        ]
+        ] + [group for group in groups3 if SOURCE in group["members"]]
     for group in groups3:
         k_layers3 = list(range(group["klo"], group["khi"] + 1))
         points, hexes, tags = GR.refine_region_further(
@@ -569,6 +577,47 @@ def build_refined_grid(
     return points, hexes, tags, keep, grid_info
 
 
+def source_box(case, terrain, around):
+    """The level-3 box around the surveyed source points.
+
+    The survey is a CSV of name, Est, Nord, Quota in UTM32N, of which only Est
+    and Nord are used: the points are dropped onto the grid's top afterwards
+    (see source_points.py), so their own Quota, which comes in 40 m high, has
+    no say here and neither does their z. The box keeps SOURCE_BACK of their
+    middle on the downhill side and SOURCE_REACH on the side the fractures are
+    -- which way that is comes from where the boxes already in `around` sit, so
+    nothing here has to know that at Rialba the towers stand north-east of the
+    points. In z it reaches from under the terrain over it to over it, by the
+    same margin a level-2 region takes.
+
+    What comes back is the box BEFORE the AROUND_SCALE every level-3 box is
+    grown by, so that what the grid ends up with is the box asked for."""
+    survey = np.loadtxt(case.source_points, delimiter=",", skiprows=1, usecols=(1, 2))
+    middle = survey.mean(axis=0) - M[:2]
+    others = np.array([[(b[0] + b[1]) / 2, (b[2] + b[3]) / 2] for b in around.values()])
+    toward = np.sign(others.mean(axis=0) - middle) if len(others) else np.ones(2)
+    lo = middle - np.where(toward > 0, SOURCE_BACK, SOURCE_REACH)
+    hi = middle + np.where(toward > 0, SOURCE_REACH, SOURCE_BACK)
+    box = (lo[0], hi[0], lo[1], hi[1])
+    corners = np.array(np.meshgrid(np.linspace(*box[:2], 11), np.linspace(*box[2:], 11)))
+    over = terrain.interp(corners.reshape(2, -1).T)
+    under, above = np.nanmin(over), np.nanmax(over)
+    print(
+        f"refining around {SOURCE}: {len(survey)} of them, middle "
+        f"({middle[0]:.1f}, {middle[1]:.1f}), reaching {SOURCE_REACH:g} m towards "
+        f"{np.round(toward).astype(int).tolist()} where the other boxes are: "
+        f"x=[{box[0]:.1f},{box[1]:.1f}] y=[{box[2]:.1f},{box[3]:.1f}], terrain over it "
+        f"{under:.1f} to {above:.1f}"
+    )
+    return (
+        *scale_interval(box[0], box[1], 1 / AROUND_SCALE),
+        *scale_interval(box[2], box[3], 1 / AROUND_SCALE),
+        *scale_interval(
+            under - case.region_z_padding, above + case.region_z_padding, 1 / AROUND_SCALE
+        ),
+    )
+
+
 def run(case):
     """Build the refined carved grid of the case's DTM -> grid.vtu, frame.npz,
     dtm_surface.stl, all in the grid's frame."""
@@ -588,6 +637,8 @@ def run(case):
                 f"refining around {surface.name}: x=[{lo[0]:.1f},{hi[0]:.1f}] "
                 f"y=[{lo[1]:.1f},{hi[1]:.1f}] z=[{lo[2]:.1f},{hi[2]:.1f}]"
             )
+    if case.source_points is not None:
+        around[SOURCE] = source_box(case, terrain, around)
     print(f"terrain ready, peak memory {peak_memory_gb():.2f} GB", flush=True)
     case.output.mkdir(parents=True, exist_ok=True)
     frame.save(case.frame_path, rotation, center)
