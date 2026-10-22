@@ -3,8 +3,8 @@
 # image through apptainer/run.sh, on one node with ncpus free cores.
 #
 #     apptainer/submit.sh [run.sh options] [--] command ...
+#     apptainer/submit.sh -o /scratch/$USER/rialba -- bash pipeline.sh
 #     apptainer/submit.sh dtm-voxelization cases/rialba.toml speed
-#     apptainer/submit.sh -o /scratch/$USER/run1 -- dtm-voxelization cases/rialba.toml speed
 #
 # The arguments go to apptainer/run.sh unchanged, so relative paths in the
 # command are relative to the repository (/workspace in the container), and
@@ -13,7 +13,8 @@
 # exported to the job (qsub -V). The job log, stdout and stderr together, is
 # written to logs/dtm_voxelization.<jobid>.log in the repository.
 # Resources: DTM_NCPUS (default 32) and DTM_MEM_GB, memory in gigabytes
-# (default 64), e.g. DTM_MEM_GB=128 DTM_NCPUS=16 apptainer/submit.sh ...
+# (default 128, which is twice what a 2.5 M cell Rialba measured and leaves
+# room for a bigger target_cells), e.g. DTM_MEM_GB=256 apptainer/submit.sh ...
 # PBS does not confine the job to its cores, so the threads of the libraries
 # (DTM_THREADS, see apptainer/shell.sh) are set to DTM_NCPUS unless given.
 
@@ -38,7 +39,7 @@ job="exec > $(printf '%q' "${logs}")/dtm_voxelization.\${PBS_JOBID}.log 2>&1; cd
 
 ncpus="${DTM_NCPUS:-32}"
 export DTM_THREADS="${DTM_THREADS:-${ncpus}}"
-mem_gb="${DTM_MEM_GB:-64}"
+mem_gb="${DTM_MEM_GB:-128}"
 
 echo "job:  ${job}"
 echo "log:  ${logs}/dtm_voxelization.<jobid>.log"
