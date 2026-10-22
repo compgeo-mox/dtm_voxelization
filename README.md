@@ -235,6 +235,19 @@ source apptainer/shell.sh                      # a shell inside it, repo at /wor
 dtm-voxelization cases/rialba.toml             # inside
 ```
 
+On a PBS cluster, [`pipeline.sh`](pipeline.sh) runs everything a case needs --
+the pipeline, the source points, the mesh of their box, the section -- and tars
+what it wrote into `output/results_<jobid>.tar.gz`, so a run is one job and one
+file to fetch:
+
+```bash
+apptainer/submit.sh -- bash pipeline.sh          # output in the repo's own output/
+```
+
+`submit.sh` asks for `DTM_NCPUS` cores (32) and `DTM_MEM_GB` gigabytes (128),
+and holds OpenMP, OpenBLAS and MKL to that core count: PBS gives a job its
+cores but does not confine it to them.
+
 The output folder is separately bindable, for writing results to scratch:
 
 ```bash

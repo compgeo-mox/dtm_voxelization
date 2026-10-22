@@ -99,6 +99,9 @@ dtm_shell() {
     # environment (pyenv, PYTHONPATH, conda) from shadowing the image's own --
     # and also drops the thread counts, so they are passed back in by hand
     isolation=(--containall --no-home --writable-tmpfs --pwd /workspace)
+    # the job's own name for itself, for whatever the run cares to call its
+    # results; --containall drops it like everything else
+    [ -n "${PBS_JOBID:-}" ] && isolation+=(--env "PBS_JOBID=${PBS_JOBID}")
     if [ -n "${threads}" ]; then
         isolation+=(
             --env "OMP_NUM_THREADS=${threads}"

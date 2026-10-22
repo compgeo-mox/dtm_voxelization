@@ -264,6 +264,19 @@ def run(case):
         flush=True,
     )
 
+    materials_path = case.speed_dir / f"{case.name}_materials.vtu"
+    meshio.write_points_cells(
+        materials_path,
+        points,
+        [("hexahedron", hexes)],
+        cell_data={"material": [hex_tags.astype(float)]},
+        binary=True,
+    )
+    print(
+        f"  wrote {materials_path} -- the same hexes, with their material to look at",
+        flush=True,
+    )
+
     used, compact = np.unique(quads, return_inverse=True)
     vtu_path = case.speed_dir / f"{case.name}_boundary.vtu"
     meshio.write_points_cells(
