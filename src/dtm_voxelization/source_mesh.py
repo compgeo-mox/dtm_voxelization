@@ -35,13 +35,8 @@ if __package__:
     from .case import load_case
     from .grid import around_boxes, source_box
     from .mesh import build_face_table, read_hex_mesh, require
-    from .speed import (
-        LATERAL_BOTTOM_TAG,
-        TOP_TAG,
-        count_inverted_hexes,
-        materials,
-        write_speed_mesh,
-    )
+    from .planes import materials
+    from .speed import LATERAL_BOTTOM_TAG, TOP_TAG, count_inverted_hexes, write_speed_mesh
 else:  # run as a plain file, from an editor's Run button: no package around it
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from dtm_voxelization import frame
@@ -49,11 +44,11 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.case import load_case
     from dtm_voxelization.grid import around_boxes, source_box
     from dtm_voxelization.mesh import build_face_table, read_hex_mesh, require
+    from dtm_voxelization.planes import materials
     from dtm_voxelization.speed import (
         LATERAL_BOTTOM_TAG,
         TOP_TAG,
         count_inverted_hexes,
-        materials,
         write_speed_mesh,
     )
 

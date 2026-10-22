@@ -215,7 +215,9 @@ labelled by the two surveyed planes (see [`planes.py`](src/dtm_voxelization/plan
 `1` over the upper one, `4` between them, `5` under the lower one, and `6` for
 the part of `1` that also stands inside the case's `conglomerate` outline
 (`data/regions/`, X Y Z in UTM32N with the z unused) -- SPEED reads quad and
-hex labels out of the same column, which is why they do not share numbers. Tags are decided in the grid's frame; the mesh is written back
+hex labels out of the same column, which is why they do not share numbers. The
+label rides on `grid.vtu`, `detached.vtu` and `source_mesh.vtu` as the cell
+array `material`, and on `speed/<case>_materials.vtu` for the exported mesh. Tags are decided in the grid's frame; the mesh is written back
 in the DTM's frame.
 
 `python -m dtm_voxelization.source_mesh CASE.toml` cuts the box around the

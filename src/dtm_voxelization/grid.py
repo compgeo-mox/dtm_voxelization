@@ -55,6 +55,7 @@ from . import templates as T
 from . import terrain as terrain_surfaces
 from .geometry_checks import check_conformity_3d, hex_volumes_signed
 from .mesh import peak_memory_gb
+from .planes import materials
 from .shift_fracture import M  # the same Rialba mean
 from .surfaces import triangles as surface_triangles
 
@@ -783,11 +784,17 @@ def run(case):
         f"total {volume.sum():.6g}"
     )
 
+    material = materials(case, points, kept_hexes)
+
     terrain.export(case.dtm_surface_path)
     meshio.write_points_cells(
         case.grid_path,
         points,
         [("hexahedron", kept_hexes)],
-        cell_data={"kind_code": [kind_code], "volume": [volume]},
+        cell_data={
+            "kind_code": [kind_code],
+            "volume": [volume],
+            "material": [material.astype(float)],
+        },
     )
     print(f"wrote {case.grid_path} -- kind_code legend: {list(enumerate(kind_names))}")

@@ -39,6 +39,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .geometry_checks import hex_volumes_signed
+from .planes import materials
 from .cut import crossings_with_jitter
 from .mesh import build_face_table, read_hex_mesh, require
 from .surfaces import in_grid_frame
@@ -400,6 +401,7 @@ def run(case):
             "crack_cell": [crack_cell],
             "side_color": [side_color],
             "volume": [np.abs(hex_volumes_signed(new_points, new_hexes))],
+            "material": [materials(case, new_points, new_hexes).astype(float)],
         },
         point_data={"opening": opening},
     )
