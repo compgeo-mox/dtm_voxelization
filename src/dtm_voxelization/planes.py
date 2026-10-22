@@ -23,8 +23,8 @@ GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
 # the rock in three, first, as a .mate is written: SPEED reads quad and hex
 # labels out of one column, and speed.py carries the boundary's two on from
 # here, so the five run 1 to 5 with nothing repeated and no hole
-ROCK_TAG = 1  # everything down to the lower plane, the conglomerate apart
-BELOW_TAG = 2
+ROCK_TAG = 1  # over the upper plane and under the lower one, the conglomerate apart
+BETWEEN_TAG = 2  # the layer the two planes hold between them
 CONGLOMERATE_TAG = 3  # of the rock over the upper plane, the part inside the outline
 CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
 
@@ -131,22 +131,23 @@ def within(outline, points):
 
 def materials(case, points, hexes):
     """Each hex labelled by where it falls against the two surveyed planes:
-    BELOW_TAG under the lower one, CONGLOMERATE_TAG over the upper one and
-    inside the case's conglomerate outline, ROCK_TAG for all the rest. The
-    upper plane therefore only cuts the conglomerate out of the rest; above it
-    and between the two is one material. A hex goes by its centre, so the
-    planes and the outline cut along cell faces -- they are not conformed to,
-    which at a metre of cell is a metre of error on surfaces known to far less
-    than that."""
+    BETWEEN_TAG inside the layer they hold between them, CONGLOMERATE_TAG over
+    the upper one and inside the case's conglomerate outline, ROCK_TAG for the
+    rest -- which is the rock over the upper plane and the rock under the lower
+    one, the same stuff on either side of the layer. A hex goes by its centre,
+    so the planes and the outline cut along cell faces -- they are not
+    conformed to, which at a metre of cell is a metre of error on surfaces
+    known to far less than that."""
     middles = points[hexes].mean(axis=1)
     sink = under_the_slope(case)
     upper = surveyed(middles[:, :2], sink + DROPS[0])
     lower = surveyed(middles[:, :2], sink + DROPS[1])
     tags = np.full(len(hexes), ROCK_TAG)
     over = middles[:, 2] > upper
-    tags[middles[:, 2] < lower] = BELOW_TAG
+    tags[~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
 
-    labels = [(ROCK_TAG, "down to the lower plane"), (BELOW_TAG, "under the lower plane")]
+    labels = [(ROCK_TAG, "over the upper plane or under the lower one"),
+              (BETWEEN_TAG, "between the two planes")]
     if case.conglomerate is not None:
         # X Y Z in UTM32N, the z of no use here: the outline is a footprint
         outline = np.loadtxt(case.conglomerate, skiprows=1, usecols=(0, 1)) - M[:2]
