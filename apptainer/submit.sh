@@ -3,7 +3,7 @@
 # image through apptainer/run.sh, on one node with ncpus free cores.
 #
 #     apptainer/submit.sh [run.sh options] [--] command ...
-#     apptainer/submit.sh -o /scratch/$USER/rialba -- bash pipeline.sh
+#     apptainer/submit.sh -- bash pipeline.sh          # output in the repo's own output/
 #     apptainer/submit.sh dtm-voxelization cases/rialba.toml speed
 #
 # The arguments go to apptainer/run.sh unchanged, so relative paths in the

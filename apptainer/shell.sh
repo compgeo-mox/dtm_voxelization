@@ -70,7 +70,10 @@ dtm_shell() {
         return 1
     fi
 
-    mkdir -p "${output}" || return $?
+    mkdir -p "${output}" || {
+        echo "cannot make the output folder ${output} -- is it somewhere you can write?" >&2
+        return 1
+    }
     output=$(cd "${output}" && pwd)
     data=$(cd "${data}" && pwd)
 
