@@ -46,7 +46,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial import cKDTree
 from shapely.geometry import LineString, Polygon
 from shapely.geometry import box as rectangle
 from shapely.geometry.polygon import orient
@@ -63,20 +62,18 @@ from vtkmodules.vtkIOXML import vtkXMLPolyDataWriter, vtkXMLUnstructuredGridRead
 if __package__:
     from .case import load_case
     from .clean_stl import to_polydata
-    from .dtm_io import _load_xyz
     from .fracture_surface import inside
     from .mesh import require
-    from .shift_fracture import M, S  # the same Rialba mean and software shift
+    from .planes import DROPS, surveyed, under_the_slope
     from .surfaces import in_grid_frame
     from .terrain import grid_triangles
 else:  # run as a plain file, from an editor's Run button: no package around it
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from dtm_voxelization.case import load_case
     from dtm_voxelization.clean_stl import to_polydata
-    from dtm_voxelization.dtm_io import _load_xyz
     from dtm_voxelization.fracture_surface import inside
     from dtm_voxelization.mesh import require
-    from dtm_voxelization.shift_fracture import M, S
+    from dtm_voxelization.planes import DROPS, surveyed, under_the_slope
     from dtm_voxelization.surfaces import in_grid_frame
     from dtm_voxelization.terrain import grid_triangles
 
@@ -85,17 +82,6 @@ NOT_FRACTURES = ("cavita",)  # a cavity is a hole in the rock, not a fracture
 BOX = ((-300.0, -200.0), (150.0, 100.0))  # the 2D model's own window on the section
 SMOOTH_PASSES = 10  # Taubin pairs over the outline, enough to take the stairs off
 WEIGHTS = (0.5, -0.53)  # Taubin's: a step towards the neighbours, a wider one back
-# a surveyed plane, as 0.2230 X + 0.4732 Y - 0.8523 Z + d = 0 with d / -0.8523 given,
-# and a second one DROPS below it
-PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
-# the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
-# topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
-GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
-DROPS = (0.0, 60.0)  # the planes to draw, below the one the fit leaves
-UNDER = 10.0  # m the first plane is wanted under the slope that runs parallel to it
-PARALLEL = 12.0  # degrees within which the ground counts as parallel to the plane
-NEIGHBOURS = 10  # ground points a local normal is taken from
-FIT_BOX = (-550.0, -160.0, 20.0, 160.0)  # where to fit: the slope below the towers
 SHEET = 20  # vertices a side of the sheet each plane is drawn as
 
 
@@ -334,88 +320,6 @@ def onto_the_outline(polygon, line):
     rise = t[hit].min()
     print(f"    carried up {rise * np.linalg.norm(step):.2f} m to end on the outline")
     return np.vstack([start + rise * step, line])
-
-
-def under_the_slope(case):
-    """How far the equation's plane has to come down to run UNDER m below the
-    ground, measured where the ground lies parallel to it.
-
-    The constant of the equation is given to five digits and its last one is
-    worth 100 m of elevation, so the plane's height is the one thing it does
-    not fix: as it stands the plane comes out of the slope below the towers.
-    What it does fix is the attitude, so the plane is dropped until it runs
-    UNDER metres below that slope -- the one piece of ground that lies parallel
-    to it, where a constant distance is a thing a plane can hold.
-
-    Only the ground inside FIT_BOX counts, and of it only the points whose own
-    normal, taken from their NEIGHBOURS nearest, stands within PARALLEL degrees
-    of the plane's. The median gap is what is matched; a slope is rough, so
-    the mean would follow whatever gullies are in the box."""
-    x, y, z = _load_xyz(case.points)
-    ground = np.column_stack([x, y, z])
-    x0, y0, x1, y1 = FIT_BOX
-    inside_box = (
-        (ground[:, 0] > x0) & (ground[:, 0] < x1) & (ground[:, 1] > y0) & (ground[:, 1] < y1)
-    )
-    ground = ground[inside_box]
-    if len(ground) < NEIGHBOURS:
-        raise SystemExit(f"the fit box {FIT_BOX} holds {len(ground)} ground points")
-
-    _, near = cKDTree(ground[:, :2]).query(ground[:, :2], k=NEIGHBOURS)
-    patch = ground[near] - ground[near].mean(axis=1)[:, None, :]
-    normals = np.linalg.svd(patch, full_matrices=False)[2][:, 2, :]
-    a, b, c = PLANE[:3]
-    upright = np.array([a, b, c]) / np.linalg.norm([a, b, c])
-    flat = np.degrees(np.arccos(np.clip(np.abs(normals @ upright), 0, 1))) < PARALLEL
-    if not flat.any():
-        raise SystemExit(
-            f"no ground in {FIT_BOX} lies within {PARALLEL} degrees of the plane"
-        )
-
-    gap = ground[flat, 2] - surveyed(ground[flat, :2], 0.0)
-    drop = UNDER - np.median(gap)
-    left = gap + drop
-    print(
-        f"  the plane's height, fitted on {flat.sum():,} of {len(ground):,} ground points in "
-        f"{FIT_BOX} whose slope runs within {PARALLEL:g} degrees of it:\n"
-        f"    it stands {-np.median(gap):.1f} m over them, wanted {UNDER:g} m under, "
-        f"so it comes down {drop:.1f} m\n"
-        f"    after which the ground is {np.median(left):.1f} m above it at the median, "
-        f"{np.percentile(left, 25):.1f} to {np.percentile(left, 75):.1f} between the quartiles, "
-        f"and still below it at {100 * (left < 0).mean():.0f} per cent of them"
-    )
-    return drop
-
-
-def surveyed(points, drop):
-    """The surveyed plane's z, DROP metres lower, over the given x and y.
-
-    The plane was fitted in Monte Mario / Italy zone 1 (Gauss-Boaga), whose
-    easting runs a million metres ahead of UTM's: read in UTM the equation puts
-    the plane 262 km underground, that million times 0.2230 / 0.8523. The shift
-    that carries the grid there is the SPEED scripts' own for the full Rialba,
-    the one turning frattura_verticale.stl into the shifted copy this repo
-    carries; reprojecting the origin properly lands 2.5 m from it in x and 3 cm
-    in y, which is 0.7 m of z and not worth a dependency.
-
-    Only, the data the plane was fitted on had been shifted by the software's
-    own S first and that Gauss-Boaga shift put back on top -- the two are mixed
-    in the SPEED scripts' merge_dtm.py, under a comment that already doubts
-    them -- so M + S goes on again here. It is worth 0.2230 / 0.8523 times
-    837 m of easting plus 0.4732 / 0.8523 times 191 m of northing, 325 m of
-    elevation: without it the plane runs 399 m under the terrain everywhere,
-    with it 73 m under on average and crossing it, which is a plane a mountain
-    can have.
-
-    Its Z is an elevation above the sea, so the cloud's mean comes off it as it
-    does off everything else. That is how the whole Gauss-Boaga lineage of this
-    case is written -- frattura_verticale.stl, Rialba_DTM2x2.txt,
-    DTMRialba5m_4Cubit -- where x and y are shifted and z never is.
-
-    DROP comes off last, and is where under_the_slope() puts the plane."""
-    a, b, c, offset = PLANE
-    here = points + GAUSS_BOAGA + (M[:2] + S[:2])
-    return -(a / c * here[:, 0] + b / c * here[:, 1] + offset) - M[2] - drop
 
 
 def write_sheet(path, drop, bounds):

@@ -40,10 +40,16 @@ import meshio
 
 from . import frame
 from .mesh import build_face_table, read_hex_mesh, require
+from .planes import DROPS, surveyed, under_the_slope
 
-HEX_TAG = 1
 LATERAL_BOTTOM_TAG = 2
 TOP_TAG = 3
+# the rock in three, by the surveyed planes. 2 and 3 are spoken for above, and
+# SPEED reads quad and hex labels out of the same column, so these carry on
+# from there; 1 stays what the whole mesh used to be, the rock over the planes
+ABOVE_TAG = 1
+BETWEEN_TAG = 4
+BELOW_TAG = 5
 
 # corner -> its three neighbours, ordered as a right-handed frame in VTK order
 CORNER_FRAMES = np.array(
@@ -93,7 +99,26 @@ def count_cut_faces(case):
     return len(np.unique(np.vstack(keys), axis=0))
 
 
-def write_speed_mesh(path, points, quads, quad_tags, hexes):
+def materials(case, points, hexes):
+    """Each hex labelled by where it falls against the two surveyed planes:
+    ABOVE_TAG over the upper one, BETWEEN_TAG between them, BELOW_TAG under the
+    lower one. A hex goes by its centre, so the planes cut along cell faces --
+    they are not conformed to, which at a metre of cell is a metre of error on
+    a surface known to far less than that."""
+    middles = points[hexes].mean(axis=1)
+    sink = under_the_slope(case)
+    upper = surveyed(middles[:, :2], sink + DROPS[0])
+    lower = surveyed(middles[:, :2], sink + DROPS[1])
+    tags = np.full(len(hexes), BETWEEN_TAG)
+    tags[middles[:, 2] > upper] = ABOVE_TAG
+    tags[middles[:, 2] < lower] = BELOW_TAG
+    for tag, label in [(ABOVE_TAG, "over the upper plane"), (BETWEEN_TAG, "between them"),
+                       (BELOW_TAG, "under the lower plane")]:
+        print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} hexes", flush=True)
+    return tags
+
+
+def write_speed_mesh(path, points, quads, quad_tags, hexes, hex_tags):
     """SPEED ASCII mesh: header, nodes, quads, hexes, all 1-based."""
     with open(path, "w") as f:
         f.write(f"  {len(points)}  {len(quads) + len(hexes)}  0  0  0\n")
@@ -110,7 +135,7 @@ def write_speed_mesh(path, points, quads, quad_tags, hexes):
         np.savetxt(
             f,
             np.column_stack(
-                [np.arange(1, len(hexes) + 1), np.full(len(hexes), HEX_TAG), hexes + 1]
+                [np.arange(1, len(hexes) + 1), hex_tags, hexes + 1]
             ),
             fmt="%d  %d  hex  " + "  ".join(["%d"] * 8),
         )
@@ -185,6 +210,8 @@ def run(case):
     for tag, label in [(LATERAL_BOTTOM_TAG, "lateral+bottom"), (TOP_TAG, "top+cracks")]:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} quads", flush=True)
 
+    hex_tags = materials(case, points, hexes)  # in the grid's frame, as the planes are
+
     require(case.frame_path, "grid")
     rotation, center = frame.load(case.frame_path)
     points = frame.to_dtm(points, rotation, center)
@@ -196,7 +223,7 @@ def run(case):
 
     case.speed_dir.mkdir(parents=True, exist_ok=True)
     mesh_path = case.speed_dir / f"{case.name}.mesh"
-    write_speed_mesh(mesh_path, points, quads, tags, hexes)
+    write_speed_mesh(mesh_path, points, quads, tags, hexes, hex_tags)
     print(
         f"  wrote {mesh_path} -- {len(points):,} nodes, "
         f"{len(quads):,} quads + {len(hexes):,} hexes",

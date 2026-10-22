@@ -1,27 +1,25 @@
-"""A plain hex mesh of the box around the source points, for SPEED:
+"""The box around the source points, cut out of the grid as a mesh of its own:
 `python -m dtm_voxelization.source_mesh [CASE.toml]`, or the file itself from
 an editor, which takes CASE below.
 
-It is the same box the grid refines around the source points (grid.py's
-`source_box`: SOURCE_BACK of their middle downhill, SOURCE_REACH towards the
-fractures, the terrain over it plus the case's region padding), filled with the
-plainest mesh there is -- cells of about CELL metres, all of one size, no
-transition templates anywhere. In plan it is therefore a rectangle, and the
-only thing that breaks the brick is the terrain, which carves the top exactly
-as it carves the big grid: a hex stays when its top face is under the terrain
-over its own centre.
+It is a piece of grid.vtu, not a second mesh of the same ground: the hexes
+whose centre falls in the box grid.py refined around the source points
+(`source_box`). So it is the same discretization as the big grid, down to the
+lattice the cells sit on, and it follows the case's target_cells without a
+single number repeated here. The box sits inside the level-3 block with the
+AROUND_SCALE margin to spare, so what comes out is all of one cell size and
+all of one piece -- both checked, and the run stops if they are not.
 
-Boundary quads carry the labels speed.py gives the big mesh, so a .mate file
-written for one works on the other:
+The top is the carving the grid already has. In plan it is a full rectangle of
+columns, and the floor is flat, at the bottom of the level-3 block.
 
-- LATERAL_BOTTOM_TAG on the four sides and the floor, which are plain
-  rectangles since nothing is refined;
-- TOP_TAG on everything else, which here is the carved top and the vertical
-  steps it leaves.
+The labels are speed.py's own, so a .mate written for the big mesh works here:
+LATERAL_BOTTOM_TAG on the four sides and the floor, TOP_TAG on the carved top,
+and the hexes split by the two surveyed planes into ABOVE_TAG, BETWEEN_TAG and
+BELOW_TAG.
 
-This mesh has nothing to do with grid.vtu: it is built from the terrain
-straight, so it needs no step of the pipeline run first, and it is not cut by
-any fracture. Writes source_mesh.vtu next to the case's output, and
+Needs the `grid` step run first. Writes source_mesh.vtu next to the case's
+output, with the material tag on it to look at, and
 speed/<case>_source.mesh with speed/<case>_source_boundary.vtu beside it.
 """
 
@@ -36,71 +34,83 @@ if __package__:
     from . import terrain as terrain_surfaces
     from .case import load_case
     from .grid import around_boxes, source_box
-    from .mesh import build_face_table
-    from .speed import LATERAL_BOTTOM_TAG, TOP_TAG, count_inverted_hexes, write_speed_mesh
+    from .mesh import build_face_table, read_hex_mesh, require
+    from .speed import (
+        LATERAL_BOTTOM_TAG,
+        TOP_TAG,
+        count_inverted_hexes,
+        materials,
+        write_speed_mesh,
+    )
 else:  # run as a plain file, from an editor's Run button: no package around it
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from dtm_voxelization import frame
     from dtm_voxelization import terrain as terrain_surfaces
     from dtm_voxelization.case import load_case
     from dtm_voxelization.grid import around_boxes, source_box
-    from dtm_voxelization.mesh import build_face_table
+    from dtm_voxelization.mesh import build_face_table, read_hex_mesh, require
     from dtm_voxelization.speed import (
         LATERAL_BOTTOM_TAG,
         TOP_TAG,
         count_inverted_hexes,
+        materials,
         write_speed_mesh,
     )
 
 CASE = "cases/rialba.toml"  # when none is given, as from an editor's Run button
-CELL = 2.0  # m wanted of a cell's side; each axis takes the whole count nearest to it
 
 
-def brick(box, cell):
-    """(points, hexes) of the plain grid filling the box, cells of about `cell`.
+def crop(points, hexes, box):
+    """The hexes whose centre is in the box, renumbered onto their own points.
 
-    Each axis is divided into the whole number of cells nearest to its own
-    length over `cell`, so the box is kept exactly and the three sides of a
-    cell come out within a few per cent of each other rather than exactly
-    equal. Hexes are numbered in VTK order, bottom face first."""
-    lo = np.array([box[0], box[2], box[4]])
-    hi = np.array([box[1], box[3], box[5]])
-    counts = np.maximum(1, np.round((hi - lo) / cell).astype(int))
-    nx, ny, nz = counts
-    axes = [np.linspace(lo[k], hi[k], counts[k] + 1) for k in range(3)]
-    x, y, z = np.meshgrid(*axes, indexing="ij")
-    points = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
+    Every one of them has to be the same size: the box lies inside the level-3
+    block, so a coarser cell in there means the block did not cover the box and
+    the piece would be a mesh of two resolutions."""
+    middles = points[hexes].mean(axis=1)
+    inside = np.ones(len(hexes), dtype=bool)
+    for axis in range(3):
+        inside &= (middles[:, axis] > box[2 * axis]) & (middles[:, axis] < box[2 * axis + 1])
+    if not inside.any():
+        raise SystemExit(f"no hex of the grid has its centre in the box {box}")
 
-    # node (i, j, k) is at i * (ny + 1) * (nz + 1) + j * (nz + 1) + k
-    i, j, k = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
-    base = (i * (ny + 1) + j) * (nz + 1) + k
-    step_i, step_j = (ny + 1) * (nz + 1), nz + 1
-    hexes = np.stack(
-        [
-            base,
-            base + step_i,
-            base + step_i + step_j,
-            base + step_j,
-            base + 1,
-            base + step_i + 1,
-            base + step_i + step_j + 1,
-            base + step_j + 1,
-        ],
-        axis=-1,
-    ).reshape(-1, 8)
+    kept = hexes[inside]
+    sides = points[kept].max(axis=1) - points[kept].min(axis=1)
+    finest = sides.min(axis=0)
+    coarser = (sides > 1.01 * finest).any(axis=1)
     print(
-        f"  brick {nx} x {ny} x {nz} = {len(hexes):,} hexes, cells of "
-        f"{(hi[0] - lo[0]) / nx:.3f} x {(hi[1] - lo[1]) / ny:.3f} x "
-        f"{(hi[2] - lo[2]) / nz:.3f} m",
+        f"  {len(kept):,} of {len(hexes):,} hexes have their centre in the box, "
+        f"cells of {finest[0]:.3f} x {finest[1]:.3f} x {finest[2]:.3f} m",
         flush=True,
     )
-    return points, hexes
+    if coarser.any():
+        raise SystemExit(
+            f"{int(coarser.sum()):,} of them are coarser than that, up to "
+            f"{sides[coarser].max(axis=0).round(3)} m: the level-3 block does not cover "
+            f"the box -- widen the inner region, or the refinement around the points"
+        )
 
-
-def compact(points, hexes):
-    """The mesh with the points no hex uses dropped."""
-    used, renumbered = np.unique(hexes, return_inverse=True)
+    used, renumbered = np.unique(kept, return_inverse=True)
     return points[used], renumbered.reshape(-1, 8)
+
+
+def check_rectangle(points, hexes):
+    """That the piece is a full rectangle of columns on a flat floor."""
+    middles = points[hexes].mean(axis=1)
+    side = (points[hexes].max(axis=1) - points[hexes].min(axis=1))[0]
+    lo = points.min(axis=0)
+    column = np.round((middles[:, :2] - lo[:2] - side[:2] / 2) / side[:2]).astype(int)
+    columns = {tuple(c) for c in column}
+    nx, ny = column.max(axis=0) + 1
+    deep = np.bincount(column[:, 0] * ny + column[:, 1], minlength=nx * ny)
+    floor = points[hexes].min(axis=1)[:, 2].min()
+    print(
+        f"  {nx} x {ny} columns of {deep.min()} to {deep.max()} cells, "
+        f"{len(columns):,} of {nx * ny:,} standing: "
+        f"{'a full rectangle' if len(columns) == nx * ny else 'HOLED'}, floor at {floor:.3f}",
+        flush=True,
+    )
+    if len(columns) != nx * ny:
+        raise SystemExit("the piece is not a full rectangle in plan")
 
 
 def tag_boundary(points, hexes):
@@ -146,30 +156,38 @@ def main(argv=None):
     root = Path(__file__).resolve().parents[2]
     case = load_case(argv[0] if argv else root / CASE)
     if case.source_points is None:
-        raise SystemExit(f"{case.name}: no [grid] source_points, so no box to mesh")
+        raise SystemExit(f"{case.name}: no [grid] source_points, so no box to cut out")
 
     terrain, rotation, center = terrain_surfaces.build(case)
     box = source_box(case, terrain, around_boxes(case, rotation, center))
-    points, hexes = brick(box, CELL)
 
-    keep = terrain.keep(points[hexes])
-    print(f"  carved: {int(keep.sum()):,} of {len(hexes):,} hexes under the terrain")
-    points, hexes = compact(points, hexes[keep])
+    require(case.grid_path, "grid")
+    points, hexes = read_hex_mesh(case.grid_path)
+    print(f"  {case.grid_path}: {len(hexes):,} hexes", flush=True)
+    points, hexes = crop(points, hexes, box)
+    check_rectangle(points, hexes)
+
     inverted = count_inverted_hexes(points, hexes)
     if inverted:
         raise ValueError(f"{inverted} inverted hexes -- SPEED needs positive Jacobians")
-
     quads, tags = tag_boundary(points, hexes)
+    hex_tags = materials(case, points, hexes)  # in the grid's frame, as the planes are
     points = frame.to_dtm(points, rotation, center)
 
     case.output.mkdir(parents=True, exist_ok=True)
     mesh_vtu = case.output / "source_mesh.vtu"
-    meshio.write_points_cells(mesh_vtu, points, [("hexahedron", hexes)], binary=True)
+    meshio.write_points_cells(
+        mesh_vtu,
+        points,
+        [("hexahedron", hexes)],
+        cell_data={"material": [hex_tags.astype(float)]},
+        binary=True,
+    )
     print(f"wrote {mesh_vtu}: {len(hexes):,} hexes, {len(points):,} points")
 
     case.speed_dir.mkdir(parents=True, exist_ok=True)
     mesh_path = case.speed_dir / f"{case.name}_source.mesh"
-    write_speed_mesh(mesh_path, points, quads, tags, hexes)
+    write_speed_mesh(mesh_path, points, quads, tags, hexes, hex_tags)
     print(
         f"wrote {mesh_path}: {len(points):,} nodes, {len(quads):,} quads + "
         f"{len(hexes):,} hexes"

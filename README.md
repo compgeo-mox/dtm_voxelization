@@ -210,9 +210,17 @@ the cracks.
 1-based. Hexes are in VTK/Exodus order with positive Jacobians and quads are
 wound outward; both are checked before writing. Quad tags, for the `.mate`
 file: `2` lateral and bottom faces (bounding-box planes), `3` everything else
-on the boundary -- the carved terrain and both sides of every crack. Hexes
-carry tag `1`. Tags are decided in the grid's frame; the mesh is written back
+on the boundary -- the carved terrain and both sides of every crack. Hexes are
+labelled by the two surveyed planes (see [`planes.py`](src/dtm_voxelization/planes.py)):
+`1` over the upper one, `4` between them, `5` under the lower one -- SPEED
+reads quad and hex labels out of the same column, which is why they do not
+share numbers. Tags are decided in the grid's frame; the mesh is written back
 in the DTM's frame.
+
+`python -m dtm_voxelization.source_mesh CASE.toml` cuts the box around the
+source points out of `grid.vtu` and writes it as a mesh of its own, with the
+same labels: the same cells as the big grid, a full rectangle in plan, no
+transition elements inside it.
 
 ## Running in a container (Apptainer)
 
