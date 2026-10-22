@@ -23,8 +23,9 @@ prints both elevations and the drop.
 The grid is read from the case's output, so run the `grid` step first; this
 does not rebuild it.
 
-Written next to the survey, in data/source_pts: the .xyz for the pipeline, the
-.vtu to drop on the grid in ParaView.
+Written to the case's output, beside the grid they were dropped onto:
+source_points.xyz for the pipeline, source_points.vtu to drop on the grid in
+ParaView. The survey itself stays in data/source_pts, where it was measured.
 """
 
 import sys
@@ -88,18 +89,17 @@ def main(argv=None):
         print(f"  {x:10.3f} {y:10.3f} {z:12.3f} {t:10.3f} {z - t:12.3f}")
     points[:, 2] = top + LIFT
 
-    where = case.grid_path
+    case.output.mkdir(parents=True, exist_ok=True)
     save_xyz(
-        survey.with_suffix(".xyz"),
+        case.output / "source_points.xyz",
         points,
-        f"{SURVEY}, UTM32N minus the DTM's mean, z on {where} + {LIFT} m",
+        f"{SURVEY}, UTM32N minus the DTM's mean, z on {case.grid_path} + {LIFT} m",
     )
+    cloud = case.output / "source_points.vtu"
     meshio.write_points_cells(
-        survey.with_suffix(".vtu"),
-        points,
-        [("vertex", np.arange(len(points)).reshape(-1, 1))],
+        cloud, points, [("vertex", np.arange(len(points)).reshape(-1, 1))]
     )
-    print(f"wrote {survey.with_suffix('.vtu')}: {len(points)} points to look at")
+    print(f"wrote {cloud}: {len(points)} points to look at")
 
 
 if __name__ == "__main__":

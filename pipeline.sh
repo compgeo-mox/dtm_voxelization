@@ -48,15 +48,13 @@ step "source points" python -m dtm_voxelization.source_points "${case_file}"
 step "source mesh" python -m dtm_voxelization.source_mesh "${case_file}"
 step "section" python -m dtm_voxelization.section "${case_file}"
 
-# the case says where it writes; the survey's own folder takes the source
-# points, so both go in
+# the case says where everything it made went
 output=$(python -c "import sys
 from dtm_voxelization.case import load_case
 print(load_case(sys.argv[1]).output)" "${case_file}")
 archive="$(dirname "${output}")/results_${PBS_JOBID:-$(date '+%Y%m%d_%H%M')}.tar.gz"
 step "archive" tar -czf "${archive}" \
-    -C "$(dirname "${output}")" "$(basename "${output}")" \
-    -C "${here}" data/source_pts
+    -C "$(dirname "${output}")" "$(basename "${output}")"
 echo "archive: ${archive}  ($(du -h "${archive}" | cut -f1))"
 
 echo "all done  $(date '+%H:%M:%S')"
