@@ -214,8 +214,9 @@ on the boundary -- the carved terrain and both sides of every crack. Hexes are
 labelled by the two surveyed planes (see [`planes.py`](src/dtm_voxelization/planes.py)):
 `5` under the lower one, `6` over the upper one and inside the case's
 `conglomerate` outline (`data/regions/`, X Y Z in UTM32N with the z unused),
-`1` all the rest -- the upper plane only cuts the conglomerate out, the rock
-over it and the rock between the two being the same -- SPEED reads quad and
+`4` all the rest -- the upper plane only cuts the conglomerate out, the rock
+over it and the rock between the two being the same. So the labels run 2 to 6,
+the boundary's two and the rock's three, with no hole and nothing repeated -- SPEED reads quad and
 hex labels out of the same column, which is why they do not share numbers. The
 label rides on `grid.vtu`, `detached.vtu` and `source_mesh.vtu` as the cell
 array `material`, and on `speed/<case>_materials.vtu` for the exported mesh. Tags are decided in the grid's frame; the mesh is written back

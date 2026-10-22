@@ -20,11 +20,10 @@ PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
 # the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
 # topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
 GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
-# the rock in three. SPEED reads quad and hex labels out of one column and
-# speed.py spends 2 and 3 on the boundary, so these keep clear of them; 1 is
-# what the whole mesh used to carry, and 4 was the rock between the planes
-# until it turned out to be the same stuff as the rock over them
-ROCK_TAG = 1  # everything down to the lower plane, the conglomerate apart
+# the rock in three, carrying on from the boundary's own 2 and 3: SPEED reads
+# quad and hex labels out of one column, so the five run 2, 3, 4, 5, 6 with
+# nothing repeated and no hole. Hexes used to carry 1, which nothing does now
+ROCK_TAG = 4  # everything down to the lower plane, the conglomerate apart
 BELOW_TAG = 5
 CONGLOMERATE_TAG = 6  # of the rock over the upper plane, the part inside the outline
 CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
