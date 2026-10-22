@@ -40,7 +40,9 @@ import meshio
 
 from . import frame
 from .mesh import build_face_table, read_hex_mesh, require
+from .fracture_surface import inside
 from .planes import DROPS, surveyed, under_the_slope
+from .shift_fracture import M  # the same Rialba mean
 
 LATERAL_BOTTOM_TAG = 2
 TOP_TAG = 3
@@ -50,6 +52,8 @@ TOP_TAG = 3
 ABOVE_TAG = 1
 BETWEEN_TAG = 4
 BELOW_TAG = 5
+CONGLOMERATE_TAG = 6  # of the rock over the upper plane, the part inside the outline
+CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
 
 # corner -> its three neighbours, ordered as a right-handed frame in VTK order
 CORNER_FRAMES = np.array(
@@ -99,21 +103,51 @@ def count_cut_faces(case):
     return len(np.unique(np.vstack(keys), axis=0))
 
 
+def within(outline, points):
+    """Which of the points fall inside the outline, a batch at a time.
+
+    The crossing test weighs one row per point against one column per edge, so
+    on a mesh of millions it is the matrix, not the work, that is the problem:
+    87 edges of conglomerate against 2.5 M hexes is 1.7 GB of float in one
+    go."""
+    return np.concatenate(
+        [inside(outline, points[at : at + CHUNK]) for at in range(0, len(points), CHUNK)]
+    )
+
+
 def materials(case, points, hexes):
     """Each hex labelled by where it falls against the two surveyed planes:
     ABOVE_TAG over the upper one, BETWEEN_TAG between them, BELOW_TAG under the
-    lower one. A hex goes by its centre, so the planes cut along cell faces --
-    they are not conformed to, which at a metre of cell is a metre of error on
-    a surface known to far less than that."""
+    lower one, and CONGLOMERATE_TAG for the part of the first that also stands
+    inside the case's conglomerate outline. A hex goes by its centre, so the
+    planes and the outline cut along cell faces -- they are not conformed to,
+    which at a metre of cell is a metre of error on surfaces known to far less
+    than that."""
     middles = points[hexes].mean(axis=1)
     sink = under_the_slope(case)
     upper = surveyed(middles[:, :2], sink + DROPS[0])
     lower = surveyed(middles[:, :2], sink + DROPS[1])
     tags = np.full(len(hexes), BETWEEN_TAG)
-    tags[middles[:, 2] > upper] = ABOVE_TAG
+    over = middles[:, 2] > upper
+    tags[over] = ABOVE_TAG
     tags[middles[:, 2] < lower] = BELOW_TAG
-    for tag, label in [(ABOVE_TAG, "over the upper plane"), (BETWEEN_TAG, "between them"),
-                       (BELOW_TAG, "under the lower plane")]:
+
+    labels = [(ABOVE_TAG, "over the upper plane"), (BETWEEN_TAG, "between them"),
+              (BELOW_TAG, "under the lower plane")]
+    if case.conglomerate is not None:
+        # X Y Z in UTM32N, the z of no use here: the outline is a footprint
+        outline = np.loadtxt(case.conglomerate, skiprows=1, usecols=(0, 1)) - M[:2]
+        if np.allclose(outline[0], outline[-1]):
+            outline = outline[:-1]
+        print(
+            f"  {case.conglomerate.name}: {len(outline)} corners, x "
+            f"[{outline[:, 0].min():.1f},{outline[:, 0].max():.1f}] y "
+            f"[{outline[:, 1].min():.1f},{outline[:, 1].max():.1f}]",
+            flush=True,
+        )
+        tags[over & within(outline, middles[:, :2])] = CONGLOMERATE_TAG
+        labels.append((CONGLOMERATE_TAG, "over it and inside the conglomerate"))
+    for tag, label in labels:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} hexes", flush=True)
     return tags
 

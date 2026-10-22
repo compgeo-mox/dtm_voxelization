@@ -48,6 +48,7 @@ class Case:
     region_z_padding: float
     outer_scale: float
     source_points: Path | None  # survey to refine around, "Est,Nord" in UTM32N
+    conglomerate: Path | None  # outline of the conglomerate, X Y Z in UTM32N, z unused
     validate_mesh: bool
     surfaces: tuple
 
@@ -100,7 +101,7 @@ def load_case(path):
         data = tomllib.load(f)
     root = path.parent
 
-    _check_keys(data, {"name", "output", "dtm", "grid"}, {"surfaces"}, path.name)
+    _check_keys(data, {"name", "output", "dtm", "grid"}, {"surfaces", "conglomerate"}, path.name)
 
     dtm = data["dtm"]
     where = f"{path.name} [dtm]"
@@ -180,6 +181,7 @@ def load_case(path):
         region_z_padding=float(grid["region_z_padding"]),
         outer_scale=float(grid["outer_scale"]),
         source_points=root / grid["source_points"] if "source_points" in grid else None,
+        conglomerate=root / data["conglomerate"] if "conglomerate" in data else None,
         validate_mesh=bool(grid["validate_mesh"]),
         surfaces=tuple(surfaces),
     )

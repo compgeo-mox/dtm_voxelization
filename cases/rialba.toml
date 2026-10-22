@@ -1,6 +1,9 @@
 # Rialba. Relative paths are resolved against this file's folder.
 
 name = "rialba"                  # also names the SPEED mesh: speed/rialba.mesh
+# the conglomerate's outline, X Y Z in UTM32N with the z unused: the rock over
+# the upper surveyed plane and inside it is labelled apart in the SPEED mesh
+conglomerate = "../data/regions/Rialba Conglomerate.csv"
 output = "../output/rialba"
 
 [dtm]
