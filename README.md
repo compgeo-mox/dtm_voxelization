@@ -211,10 +211,11 @@ the cracks.
 wound outward; both are checked before writing. Quad tags, for the `.mate`
 file. Hexes come first, labelled by the two surveyed planes and the case's two
 outlines (see [`planes.py`](src/dtm_voxelization/planes.py); the outlines live
-in `data/regions/`, X Y Z in UTM32N with the z unused): `2` the layer the
-planes hold between them, which is only inside the `deposit`, `3` the
-`conglomerate` over the upper plane, `4` the rest of the deposit over the upper
-plane, `1` everything else. Then the quads: `5` lateral and bottom faces
+in `data/regions/`, X Y Z in UTM32N with the z unused): `3` the
+`conglomerate` over the upper plane and `4` the `deposit` over it, each inside
+its own outline; `2` the layer the planes hold between them, which runs under
+both bodies; `1` everything else, outside the two outlines or under the lower
+plane. Then the quads: `5` lateral and bottom faces
 (bounding-box planes), `6` everything else on the boundary -- the carved
 terrain and both sides of every crack. So the labels run 1 to 6, the rock's
 four and the boundary's two, with no hole and nothing repeated -- SPEED reads quad and

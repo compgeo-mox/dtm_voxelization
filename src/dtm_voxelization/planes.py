@@ -24,7 +24,7 @@ GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
 # labels out of one column, and speed.py carries the boundary's two on from
 # here, so the six run 1 to 6 with nothing repeated and no hole
 ROCK_TAG = 1  # what none of the three below claims
-BETWEEN_TAG = 2  # the layer the two planes hold between them, inside the deposit
+BETWEEN_TAG = 2  # the layer the planes hold, under the deposit and the conglomerate both
 CONGLOMERATE_TAG = 3  # over the upper plane, inside the conglomerate, deposit or not
 DEPOSIT_TAG = 4  # over the upper plane, inside the deposit, outside the conglomerate
 CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
@@ -156,17 +156,15 @@ def materials(case, points, hexes):
     """Each hex labelled by where it falls against the two planes and the two
     outlines the case carries.
 
-The layer holds only inside the deposit: outside it
-    the rock is ROCK_TAG whatever its height, and so it is under the lower
-    plane. Inside the deposit a hex takes BETWEEN_TAG between the planes and
-    DEPOSIT_TAG over the upper one.
+Both bodies stand on the upper plane: the conglomerate takes
+    CONGLOMERATE_TAG over it and the deposit DEPOSIT_TAG, each inside its own
+    outline. The two lie side by side, sharing a stretch of boundary and
+    overlapping over 1,245 m2 only, so neither is tied to the other.
 
-    The conglomerate is a body of its own and does not stop at the deposit --
-    the two outlines in fact lie side by side, sharing a stretch of boundary
-    and overlapping over 1,245 m2, so tying it to the deposit would leave it
-    with nothing. It takes CONGLOMERATE_TAG wherever it stands over the upper
-    plane, which is what gives it a top. An outline the case leaves out is
-    taken as covering everything.
+    BETWEEN_TAG is then the layer the planes hold between them, under either of
+    the two -- it runs on under the conglomerate as it does under the deposit.
+    Anywhere else, and under the lower plane, the rock is ROCK_TAG. An outline
+    the case leaves out is taken as covering everything.
 
     A hex goes by its centre, so the planes and the outlines cut along cell
     faces -- they are not conformed to, which at a metre of cell is a metre of
@@ -180,12 +178,12 @@ The layer holds only inside the deposit: outside it
     in_conglomerate = footprint(case.conglomerate, middles[:, :2], "conglomerate")
 
     tags = np.full(len(hexes), ROCK_TAG)
-    tags[in_deposit & ~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
+    tags[(in_deposit | in_conglomerate) & ~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
     tags[in_deposit & over] = DEPOSIT_TAG
-    tags[over & in_conglomerate] = CONGLOMERATE_TAG
+    tags[in_conglomerate & over] = CONGLOMERATE_TAG
     for tag, label in [
-        (ROCK_TAG, "outside all three"),
-        (BETWEEN_TAG, "the deposit, between the two planes"),
+        (ROCK_TAG, "outside both outlines, or under the lower plane"),
+        (BETWEEN_TAG, "between the two planes, under either body"),
         (CONGLOMERATE_TAG, "the conglomerate, over the upper plane"),
         (DEPOSIT_TAG, "the deposit, over the upper plane"),
     ]:
