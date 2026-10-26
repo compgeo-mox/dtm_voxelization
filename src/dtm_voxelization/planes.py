@@ -20,12 +20,13 @@ PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
 # the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
 # topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
 GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
-# the rock in three, first, as a .mate is written: SPEED reads quad and hex
+# the rock in four, first, as a .mate is written: SPEED reads quad and hex
 # labels out of one column, and speed.py carries the boundary's two on from
-# here, so the five run 1 to 5 with nothing repeated and no hole
-ROCK_TAG = 1  # over the upper plane and under the lower one, the conglomerate apart
-BETWEEN_TAG = 2  # the layer the two planes hold between them
-CONGLOMERATE_TAG = 3  # of the rock over the upper plane, the part inside the outline
+# here, so the six run 1 to 6 with nothing repeated and no hole
+ROCK_TAG = 1  # what none of the three below claims
+BETWEEN_TAG = 2  # the layer the two planes hold between them, inside the deposit
+CONGLOMERATE_TAG = 3  # over the upper plane, inside the conglomerate, deposit or not
+DEPOSIT_TAG = 4  # over the upper plane, inside the deposit, outside the conglomerate
 CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
 
 DROPS = (0.0, 60.0)  # the planes to draw, below the one the fit leaves
@@ -129,38 +130,64 @@ def within(outline, points):
     )
 
 
+def footprint(path, points, what):
+    """Which of the points stand inside the outline the file draws.
+
+    The file is X Y Z in UTM32N and the z is of no use: what it draws is a
+    footprint. The ring closes itself, so a file that repeats its first corner
+    and one that does not both work. No file means no limit: everything is
+    inside."""
+    if path is None:
+        print(f"  no {what} outline: the whole mesh counts as inside", flush=True)
+        return np.ones(len(points), dtype=bool)
+    outline = np.loadtxt(path, skiprows=1, usecols=(0, 1)) - M[:2]
+    if np.allclose(outline[0], outline[-1]):
+        outline = outline[:-1]
+    print(
+        f"  {what} from {path.name}: {len(outline)} corners, x "
+        f"[{outline[:, 0].min():.1f},{outline[:, 0].max():.1f}] y "
+        f"[{outline[:, 1].min():.1f},{outline[:, 1].max():.1f}]",
+        flush=True,
+    )
+    return within(outline, points)
+
+
 def materials(case, points, hexes):
-    """Each hex labelled by where it falls against the two surveyed planes:
-    BETWEEN_TAG inside the layer they hold between them, CONGLOMERATE_TAG over
-    the upper one and inside the case's conglomerate outline, ROCK_TAG for the
-    rest -- which is the rock over the upper plane and the rock under the lower
-    one, the same stuff on either side of the layer. A hex goes by its centre,
-    so the planes and the outline cut along cell faces -- they are not
-    conformed to, which at a metre of cell is a metre of error on surfaces
-    known to far less than that."""
+    """Each hex labelled by where it falls against the two planes and the two
+    outlines the case carries.
+
+The layer holds only inside the deposit: outside it
+    the rock is ROCK_TAG whatever its height, and so it is under the lower
+    plane. Inside the deposit a hex takes BETWEEN_TAG between the planes and
+    DEPOSIT_TAG over the upper one.
+
+    The conglomerate is a body of its own and does not stop at the deposit --
+    the two outlines in fact lie side by side, sharing a stretch of boundary
+    and overlapping over 1,245 m2, so tying it to the deposit would leave it
+    with nothing. It takes CONGLOMERATE_TAG wherever it stands over the upper
+    plane, which is what gives it a top. An outline the case leaves out is
+    taken as covering everything.
+
+    A hex goes by its centre, so the planes and the outlines cut along cell
+    faces -- they are not conformed to, which at a metre of cell is a metre of
+    error on surfaces known to far less than that."""
     middles = points[hexes].mean(axis=1)
     sink = under_the_slope(case)
     upper = surveyed(middles[:, :2], sink + DROPS[0])
     lower = surveyed(middles[:, :2], sink + DROPS[1])
-    tags = np.full(len(hexes), ROCK_TAG)
     over = middles[:, 2] > upper
-    tags[~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
+    in_deposit = footprint(case.deposit, middles[:, :2], "deposit")
+    in_conglomerate = footprint(case.conglomerate, middles[:, :2], "conglomerate")
 
-    labels = [(ROCK_TAG, "over the upper plane or under the lower one"),
-              (BETWEEN_TAG, "between the two planes")]
-    if case.conglomerate is not None:
-        # X Y Z in UTM32N, the z of no use here: the outline is a footprint
-        outline = np.loadtxt(case.conglomerate, skiprows=1, usecols=(0, 1)) - M[:2]
-        if np.allclose(outline[0], outline[-1]):
-            outline = outline[:-1]
-        print(
-            f"  {case.conglomerate.name}: {len(outline)} corners, x "
-            f"[{outline[:, 0].min():.1f},{outline[:, 0].max():.1f}] y "
-            f"[{outline[:, 1].min():.1f},{outline[:, 1].max():.1f}]",
-            flush=True,
-        )
-        tags[over & within(outline, middles[:, :2])] = CONGLOMERATE_TAG
-        labels.append((CONGLOMERATE_TAG, "over the upper plane and in the conglomerate"))
-    for tag, label in labels:
+    tags = np.full(len(hexes), ROCK_TAG)
+    tags[in_deposit & ~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
+    tags[in_deposit & over] = DEPOSIT_TAG
+    tags[over & in_conglomerate] = CONGLOMERATE_TAG
+    for tag, label in [
+        (ROCK_TAG, "outside all three"),
+        (BETWEEN_TAG, "the deposit, between the two planes"),
+        (CONGLOMERATE_TAG, "the conglomerate, over the upper plane"),
+        (DEPOSIT_TAG, "the deposit, over the upper plane"),
+    ]:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} hexes", flush=True)
     return tags

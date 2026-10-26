@@ -42,9 +42,9 @@ from . import frame
 from .mesh import build_face_table, read_hex_mesh, require
 from .planes import materials
 
-# after the rock's own 1, 2 and 3 (see planes.py): one column, no repeats
-LATERAL_BOTTOM_TAG = 4
-TOP_TAG = 5
+# after the rock's own 1 to 4 (see planes.py): one column, no repeats
+LATERAL_BOTTOM_TAG = 5
+TOP_TAG = 6
 # the rock in three, by the surveyed planes. 2 and 3 are spoken for above, and
 # SPEED reads quad and hex labels out of the same column, so these carry on
 # from there; 1 stays what the whole mesh used to be, the rock over the planes

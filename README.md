@@ -209,15 +209,15 @@ the cracks.
 **SPEED.** The `GRIDFILE` layout: nodes, then boundary quads, then hexes,
 1-based. Hexes are in VTK/Exodus order with positive Jacobians and quads are
 wound outward; both are checked before writing. Quad tags, for the `.mate`
-file. Hexes come first, labelled by the two surveyed planes (see
-[`planes.py`](src/dtm_voxelization/planes.py)): `2` the layer they hold between
-them, `3` over the upper one and inside the case's `conglomerate` outline
-(`data/regions/`, X Y Z in UTM32N with the z unused), `1` all the rest -- the
-rock over the upper plane and the rock under the lower one, the same stuff on
-either side of the layer. Then the quads: `4` lateral and bottom faces
-(bounding-box planes), `5` everything else on the boundary -- the carved
-terrain and both sides of every crack. So the labels run 1 to 5, the rock's
-three and the boundary's two, with no hole and nothing repeated -- SPEED reads quad and
+file. Hexes come first, labelled by the two surveyed planes and the case's two
+outlines (see [`planes.py`](src/dtm_voxelization/planes.py); the outlines live
+in `data/regions/`, X Y Z in UTM32N with the z unused): `2` the layer the
+planes hold between them, which is only inside the `deposit`, `3` the
+`conglomerate` over the upper plane, `4` the rest of the deposit over the upper
+plane, `1` everything else. Then the quads: `5` lateral and bottom faces
+(bounding-box planes), `6` everything else on the boundary -- the carved
+terrain and both sides of every crack. So the labels run 1 to 6, the rock's
+four and the boundary's two, with no hole and nothing repeated -- SPEED reads quad and
 hex labels out of the same column, which is why they do not share numbers. The
 label rides on `grid.vtu`, `detached.vtu` and `source_mesh.vtu` as the cell
 array `material`, and on `speed/<case>_materials.vtu` for the exported mesh. Tags are decided in the grid's frame; the mesh is written back
