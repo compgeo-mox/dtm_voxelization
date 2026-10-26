@@ -10,8 +10,11 @@ speed.py labels the rock above, between and below them.
 import numpy as np
 from scipy.spatial import cKDTree
 
+import shapely
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
+
 from .dtm_io import _load_xyz
-from .fracture_surface import inside
 from .shift_fracture import M, S  # the same Rialba mean and software shift
 
 # a surveyed plane, as 0.2230 X + 0.4732 Y - 0.8523 Z + d = 0 with d / -0.8523 given,
@@ -27,7 +30,6 @@ ROCK_TAG = 1  # what none of the three below claims
 BETWEEN_TAG = 2  # the layer the planes hold, under the deposit and the conglomerate both
 CONGLOMERATE_TAG = 3  # over the upper plane, inside the conglomerate, deposit or not
 DEPOSIT_TAG = 4  # over the upper plane, inside the deposit, outside the conglomerate
-CHUNK = 200_000  # hexes per batch of the point-in-polygon test, to bound its matrix
 
 DROPS = (0.0, 60.0)  # the planes to draw, below the one the fit leaves
 UNDER = 10.0  # m the first plane is wanted under the slope that runs parallel to it
@@ -118,38 +120,58 @@ def surveyed(points, drop):
     return -(a / c * here[:, 0] + b / c * here[:, 1] + offset) - M[2] - drop
 
 
-def within(outline, points):
-    """Which of the points fall inside the outline, a batch at a time.
-
-    The crossing test weighs one row per point against one column per edge, so
-    on a mesh of millions it is the matrix, not the work, that is the problem:
-    87 edges of conglomerate against 2.5 M hexes is 1.7 GB of float in one
-    go."""
-    return np.concatenate(
-        [inside(outline, points[at : at + CHUNK]) for at in range(0, len(points), CHUNK)]
-    )
-
-
-def footprint(path, points, what):
-    """Which of the points stand inside the outline the file draws.
+def outline_of(path, what):
+    """The footprint the file draws, as a polygon in the grid's frame.
 
     The file is X Y Z in UTM32N and the z is of no use: what it draws is a
     footprint. The ring closes itself, so a file that repeats its first corner
-    and one that does not both work. No file means no limit: everything is
-    inside."""
+    and one that does not both work, and buffer(0) settles whatever the
+    digitizing left crossing itself."""
     if path is None:
-        print(f"  no {what} outline: the whole mesh counts as inside", flush=True)
-        return np.ones(len(points), dtype=bool)
-    outline = np.loadtxt(path, skiprows=1, usecols=(0, 1)) - M[:2]
-    if np.allclose(outline[0], outline[-1]):
-        outline = outline[:-1]
+        return None
+    corners = np.loadtxt(path, skiprows=1, usecols=(0, 1)) - M[:2]
+    shape = Polygon(corners).buffer(0)
     print(
-        f"  {what} from {path.name}: {len(outline)} corners, x "
-        f"[{outline[:, 0].min():.1f},{outline[:, 0].max():.1f}] y "
-        f"[{outline[:, 1].min():.1f},{outline[:, 1].max():.1f}]",
+        f"  {what} from {path.name}: {len(corners)} corners, {shape.area:,.0f} m2, x "
+        f"[{corners[:, 0].min():.1f},{corners[:, 0].max():.1f}] y "
+        f"[{corners[:, 1].min():.1f},{corners[:, 1].max():.1f}]",
         flush=True,
     )
-    return within(outline, points)
+    return shape
+
+
+def sewn(deposit, conglomerate):
+    """The two footprints with the slivers between them closed.
+
+    They were drawn one at a time along the same contact, so between them they
+    leave splinters -- at Rialba 15 of them, 176 m2 in all and none wider than
+    2 m, which is thinner than a cell. A hex whose centre lands in one belongs
+    to neither body and comes out labelled as plain rock, a blue seam along the
+    contact. The splinters are the holes of the union, and they go to the
+    conglomerate; no outer boundary moves."""
+    if deposit is None or conglomerate is None:
+        return deposit, conglomerate
+    union = unary_union([deposit, conglomerate])
+    parts = union.geoms if union.geom_type == "MultiPolygon" else [union]
+    seam = unary_union([Polygon(part.exterior) for part in parts]).difference(union)
+    if seam.is_empty:
+        return deposit, conglomerate
+    splinters = seam.geoms if seam.geom_type == "MultiPolygon" else [seam]
+    print(
+        f"  the two meet along a contact that leaves {len(list(splinters))} splinters "
+        f"between them, {seam.area:.1f} m2 in all: sewn onto the conglomerate",
+        flush=True,
+    )
+    return deposit, unary_union([conglomerate, seam])
+
+
+def footprint(shape, points, what):
+    """Which of the points stand inside the shape. No shape, no limit."""
+    if shape is None:
+        print(f"  no {what} outline: the whole mesh counts as inside", flush=True)
+        return np.ones(len(points), dtype=bool)
+    shapely.prepare(shape)
+    return shapely.contains_xy(shape, points[:, 0], points[:, 1])
 
 
 def materials(case, points, hexes):
@@ -174,8 +196,12 @@ Both bodies stand on the upper plane: the conglomerate takes
     upper = surveyed(middles[:, :2], sink + DROPS[0])
     lower = surveyed(middles[:, :2], sink + DROPS[1])
     over = middles[:, 2] > upper
-    in_deposit = footprint(case.deposit, middles[:, :2], "deposit")
-    in_conglomerate = footprint(case.conglomerate, middles[:, :2], "conglomerate")
+    deposit, conglomerate = sewn(
+        outline_of(case.deposit, "deposit"),
+        outline_of(case.conglomerate, "conglomerate"),
+    )
+    in_deposit = footprint(deposit, middles[:, :2], "deposit")
+    in_conglomerate = footprint(conglomerate, middles[:, :2], "conglomerate")
 
     tags = np.full(len(hexes), ROCK_TAG)
     tags[(in_deposit | in_conglomerate) & ~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
