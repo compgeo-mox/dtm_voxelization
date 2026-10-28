@@ -34,10 +34,11 @@ horizontal, y up -- as a flat drawing at z = 0:
   every fracture starts ON the boundary and not a stair short of it.
 - plane_<drop>m.txt / .vtp: the same, for each surveyed plane of PLANE and
   DROPS, which crosses the section along a straight line.
-- regions.txt / .vtp: the domain split into one piece per material, the
-  material being the one the cut cells carry from the 3D mesh. The .txt has
-  four columns, x, y, the material and which piece, and the pieces tile the
-  domain exactly, sharing their edges.
+- regions.txt / .vtp: the domain split into one piece per material, by the
+  same rule planes.py labels the 3D mesh with -- straight edges, since on this
+  plane the surveyed planes are lines and a footprint is a run of x. The .txt
+  has four columns, x, y, the material and which piece, and the pieces tile the
+  domain exactly, sharing its boundary and their own edges.
 
 The .txt files are two columns, x and y, which is what a 2D model wants; the
 .vtp are the same points as lines, to look at. section.vtp, section_surfaces
@@ -69,7 +70,17 @@ if __package__:
     from .clean_stl import to_polydata
     from .fracture_surface import inside
     from .mesh import require
-    from .planes import DROPS, surveyed, under_the_slope
+    from .planes import (
+        BETWEEN_TAG,
+        CONGLOMERATE_TAG,
+        DEPOSIT_TAG,
+        DROPS,
+        ROCK_TAG,
+        outline_of,
+        sewn,
+        surveyed,
+        under_the_slope,
+    )
     from .surfaces import in_grid_frame
     from .terrain import grid_triangles
 else:  # run as a plain file, from an editor's Run button: no package around it
@@ -78,7 +89,17 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.clean_stl import to_polydata
     from dtm_voxelization.fracture_surface import inside
     from dtm_voxelization.mesh import require
-    from dtm_voxelization.planes import DROPS, surveyed, under_the_slope
+    from dtm_voxelization.planes import (
+        BETWEEN_TAG,
+        CONGLOMERATE_TAG,
+        DEPOSIT_TAG,
+        DROPS,
+        ROCK_TAG,
+        outline_of,
+        sewn,
+        surveyed,
+        under_the_slope,
+    )
     from dtm_voxelization.surfaces import in_grid_frame
     from dtm_voxelization.terrain import grid_triangles
 
@@ -397,54 +418,78 @@ def on_the_section(drop, normal, origin, polygon):
     return chains
 
 
-def regions(section, flat, polygon):
-    """The domain in pieces, one per material: [(material, ring), ...].
+def strip_of(shape, normal, origin, reach):
+    """Where along the section the ground stands inside the footprint, as the
+    union of the vertical strips of x it covers.
 
-    The cut carries the material of the hex each of its cells came from, so
-    the pieces are the cells of one material dissolved into one shape and then
-    held to the domain. They therefore tile it exactly and share their edges,
-    and their boundaries are the mesh's own staircase, not a smooth line: this
-    is the 3D model's labelling read off on the plane, not a drawing of it.
+    The section is a VERTICAL plane, so every point of it with the same x sits
+    over the same spot of the map: being inside a footprint is a question
+    about x alone. The line of the section is intersected with the footprint
+    and each piece's ends give one strip. No footprint, no limit: the whole
+    reach."""
+    tall = rectangle(reach[0], -1e5, reach[1], 1e5)
+    if shape is None:
+        return tall
+    along = np.cross(normal, [0.0, 0.0, 1.0])
+    along /= np.linalg.norm(along)
+    ends = origin[:2] + np.array(reach)[:, None] * along[:2]
+    crossed = LineString(ends).intersection(shape)
+    parts = crossed.geoms if crossed.geom_type == "MultiLineString" else [crossed]
+    strips = []
+    for part in parts:
+        if part.is_empty:
+            continue
+        along_it = (np.array(part.coords) - origin[:2]) @ along[:2]
+        strips.append(rectangle(along_it.min(), -1e5, along_it.max(), 1e5))
+    return unary_union(strips) if strips else Polygon()
 
-    A piece with a hole in it would be a material enclosing another, which at
-    Rialba nothing does, so one is reported and its ring dropped rather than
-    quietly written as if solid."""
-    array = section.GetCellData().GetArray("material")
-    if array is None:
-        print("  the cut carries no material: regions skipped -- rerun the detach step")
-        return []
-    tags = vtk_to_numpy(array)
-    cells = cells_of(section, "polys")
+
+def regions(case, polygon, fitted, normal, origin):
+    """The domain cut into one piece per material: [(material, ring), ...].
+
+    Built from the rule itself, not read off the cells: on the section the two
+    planes are straight lines and a footprint is a run of x, so the pieces come
+    out with straight edges and tile the domain exactly, sharing the domain's
+    own boundary. Dissolving the cut cells by their material instead gave the
+    staircase of the mesh, which did not meet the smoothed boundary.
+
+    Which is which follows planes.py: over the upper plane the conglomerate,
+    then the deposit, between the planes the layer under either of them, and
+    ROCK_TAG whatever is left."""
     domain = Polygon(polygon)
-    found = {}
-    for tag in np.unique(tags):
-        found[tag] = unary_union(
-            [Polygon(flat[cell]) for cell, carries in zip(cells, tags) if carries == tag]
-        ).intersection(domain)
+    reach = (polygon[:, 0].min(), polygon[:, 0].max())
+    deposit, conglomerate = sewn(
+        outline_of(case.deposit, "deposit"), outline_of(case.conglomerate, "conglomerate")
+    )
+    in_deposit = strip_of(deposit, normal, origin, reach)
+    in_conglomerate = strip_of(conglomerate, normal, origin, reach)
 
-    # the domain's boundary was smoothed off the staircase the cells make, so
-    # along the terrain it runs a little outside them: that sliver belongs to
-    # no material. It goes to whichever region it shares the most edge with,
-    # and the pieces then tile the domain exactly, which is the point of them
-    left = domain.difference(unary_union(list(found.values())))
-    slivers = left.geoms if left.geom_type == "MultiPolygon" else ([] if left.is_empty else [left])
-    for sliver in slivers:
-        tag = max(found, key=lambda t: sliver.intersection(found[t].boundary).length)
-        found[tag] = unary_union([found[tag], sliver])
-    if slivers:
-        print(
-            f"  {len(list(slivers))} sliver(s) between the smoothed boundary and the cells, "
-            f"{left.area:.0f} m2 in all: given to the material each borders most"
-        )
+    at = origin[:2] + np.array(reach)[:, None] * (
+        np.cross(normal, [0.0, 0.0, 1.0]) / np.linalg.norm(np.cross(normal, [0.0, 0.0, 1.0]))
+    )[:2]
+    upper = surveyed(at, fitted + DROPS[0]) - origin[2]
+    lower = surveyed(at, fitted + DROPS[1]) - origin[2]
+    over = Polygon(
+        [(reach[0], upper[0]), (reach[1], upper[1]), (reach[1], 1e5), (reach[0], 1e5)]
+    )
+    between = Polygon(
+        [(reach[0], lower[0]), (reach[1], lower[1]), (reach[1], upper[1]), (reach[0], upper[0])]
+    )
+
+    found = {}
+    found[CONGLOMERATE_TAG] = domain & over & in_conglomerate
+    found[DEPOSIT_TAG] = (domain & over & in_deposit) - in_conglomerate
+    found[BETWEEN_TAG] = domain & between & unary_union([in_deposit, in_conglomerate])
+    found[ROCK_TAG] = domain - unary_union(list(found.values()))
 
     pieces = []
-    for tag, shape in found.items():
+    for tag in sorted(found):
+        shape = found[tag]
         parts = shape.geoms if shape.geom_type == "MultiPolygon" else [shape]
-        parts = sorted((p for p in parts if not p.is_empty), key=lambda p: -p.area)
+        parts = sorted((p for p in parts if p.area > 0), key=lambda p: -p.area)
         print(
-            f"  material {tag:g}: {int((tags == tag).sum()):,} cut cells -> "
-            f"{len(parts)} piece(s), {shape.area:,.0f} m2 of the domain's "
-            f"{domain.area:,.0f}",
+            f"  material {tag}: {len(parts)} piece(s), {shape.area:,.0f} m2 of the "
+            f"domain's {domain.area:,.0f}",
             flush=True,
         )
         for part in parts:
@@ -454,6 +499,8 @@ def regions(section, flat, polygon):
                     f"{sum(Polygon(r).area for r in part.interiors):,.0f} m2: left out"
                 )
             pieces.append((tag, np.array(orient(Polygon(part.exterior)).exterior.coords)[:-1]))
+    missing = domain.area - sum(shape.area for shape in found.values())
+    print(f"  the pieces leave {missing:.3f} m2 of the domain unclaimed")
     return pieces
 
 
@@ -628,9 +675,6 @@ def main(argv=None):
     write_flat(case.output / "profile", [np.vstack([whole, whole[0]])])
     polygon = clip(whole, BOX)
     write_flat(case.output / "domain", [np.vstack([polygon, polygon[0]])])
-    pieces = regions(section, flat, polygon)
-    if pieces:
-        write_regions(case.output / "regions", pieces)
 
     for surface in surfaces:
         tri = in_grid_frame(case, surface)
@@ -649,6 +693,7 @@ def main(argv=None):
         write_flat(case.output / f"fracture_{surface.name}", kept)
 
     fitted = under_the_slope(case)
+    write_regions(case.output / "regions", regions(case, polygon, fitted, normal, origin))
     for drop in DROPS:
         write_sheet(
             case.output / f"plane_{drop:g}m_sheet.vtp",

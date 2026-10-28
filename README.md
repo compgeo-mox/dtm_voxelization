@@ -231,10 +231,11 @@ transition elements inside it.
 
 `python -m dtm_voxelization.section CASE.toml` carries the labels down to the
 2D model as well: besides `domain.txt`, the outline of the section, it writes
-`regions.txt` with four columns -- x, y, the material and which piece -- the
-pieces being the cut cells of one material dissolved into one shape and held
-to the domain, so they tile it exactly and share their edges. `regions.vtp`
-is the same, as polygons to look at.
+`regions.txt` with four columns -- x, y, the material and which piece. The
+pieces come from the labelling rule itself, not from the cells: on this plane
+the surveyed planes are straight lines and a footprint is a run of x, so they
+have straight edges and tile the domain exactly, sharing its boundary.
+`regions.vtp` is the same, as polygons to look at.
 
 ## Running in a container (Apptainer)
 
