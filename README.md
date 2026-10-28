@@ -229,6 +229,13 @@ source points out of `grid.vtu` and writes it as a mesh of its own, with the
 same labels: the same cells as the big grid, a full rectangle in plan, no
 transition elements inside it.
 
+`python -m dtm_voxelization.section CASE.toml` carries the labels down to the
+2D model as well: besides `domain.txt`, the outline of the section, it writes
+`regions.txt` with four columns -- x, y, the material and which piece -- the
+pieces being the cut cells of one material dissolved into one shape and held
+to the domain, so they tile it exactly and share their edges. `regions.vtp`
+is the same, as polygons to look at.
+
 ## Running in a container (Apptainer)
 
 The image carries the dependencies, Open3D included (Python 3.12), not the code: `shell.sh` bind-mounts this

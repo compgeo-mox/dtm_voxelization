@@ -34,6 +34,10 @@ horizontal, y up -- as a flat drawing at z = 0:
   every fracture starts ON the boundary and not a stair short of it.
 - plane_<drop>m.txt / .vtp: the same, for each surveyed plane of PLANE and
   DROPS, which crosses the section along a straight line.
+- regions.txt / .vtp: the domain split into one piece per material, the
+  material being the one the cut cells carry from the 3D mesh. The .txt has
+  four columns, x, y, the material and which piece, and the pieces tile the
+  domain exactly, sharing their edges.
 
 The .txt files are two columns, x and y, which is what a 2D model wants; the
 .vtp are the same points as lines, to look at. section.vtp, section_surfaces
@@ -49,6 +53,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 from shapely.geometry import box as rectangle
 from shapely.geometry.polygon import orient
+from shapely.ops import unary_union
 from vtkmodules.util.numpy_support import (
     numpy_to_vtk,
     numpy_to_vtkIdTypeArray,
@@ -161,24 +166,37 @@ def loops_of(edges):
     return chains
 
 
-def outline(points, polygons):
-    """The section's boundary: the edges only one of its polygons owns, chained
-    and wound counter-clockwise. The longest chain is the outline itself; the
-    others are the holes the cracks and the carving leave."""
-    edges = np.vstack([np.column_stack([p, np.roll(p, -1)]) for p in polygons])
-    _, first, counts = np.unique(
-        np.sort(edges, axis=1), axis=0, return_index=True, return_counts=True
-    )
-    rim = edges[first[counts == 1]]
-    chains = sorted(loops_of(rim), key=len, reverse=True)
-    print(
-        f"  the section's boundary: {len(rim):,} edges in {len(chains)} chains, the longest "
-        f"{len(chains[0]):,} points; the rest are holes"
-    )
-    loop = np.array(chains[0])
-    x, y = points[loop, 0], points[loop, 1]
-    if np.sum((np.roll(x, -1) - x) * (np.roll(y, -1) + y)) > 0:  # clockwise
-        loop = loop[::-1]
+def dissolve(flat, cells):
+    """The cut's cells as one shape, the biggest if it falls into several."""
+    shape = unary_union([Polygon(flat[cell]) for cell in cells])
+    parts = shape.geoms if shape.geom_type == "MultiPolygon" else [shape]
+    parts = sorted(parts, key=lambda part: -part.area)
+    if len(parts) > 1:
+        print(
+            f"  the section falls into {len(parts)} pieces: keeping the largest, "
+            f"{parts[0].area:,.0f} m2 of {shape.area:,.0f}"
+        )
+    return parts[0]
+
+
+def outline(shape):
+    """The section's boundary, wound counter-clockwise.
+
+    The cells are dissolved into one shape and its exterior read off, rather
+    than the boundary edges chained one to the next: three of them meet
+    wherever a refinement step or a crack reaches the rim, and a walk that
+    arrives there has no way to tell which way the rim goes. It stops instead,
+    and the rim comes out in pieces -- on Rialba's 2.6 M cell mesh the longest
+    of them held a sixth of the domain, which is what the clipped domain then
+    was. The holes the cracks and the carving leave are dropped: the cracks are
+    written on their own, as lines."""
+    if shape.interiors:
+        print(
+            f"  the boundary holds {len(shape.interiors)} hole(s), "
+            f"{sum(Polygon(ring).area for ring in shape.interiors):,.0f} m2: left out"
+        )
+    loop = np.array(orient(Polygon(shape.exterior)).exterior.coords)[:-1]
+    print(f"  the section's boundary: {len(loop):,} points, {shape.area:,.0f} m2")
     return loop
 
 
@@ -379,6 +397,106 @@ def on_the_section(drop, normal, origin, polygon):
     return chains
 
 
+def regions(section, flat, polygon):
+    """The domain in pieces, one per material: [(material, ring), ...].
+
+    The cut carries the material of the hex each of its cells came from, so
+    the pieces are the cells of one material dissolved into one shape and then
+    held to the domain. They therefore tile it exactly and share their edges,
+    and their boundaries are the mesh's own staircase, not a smooth line: this
+    is the 3D model's labelling read off on the plane, not a drawing of it.
+
+    A piece with a hole in it would be a material enclosing another, which at
+    Rialba nothing does, so one is reported and its ring dropped rather than
+    quietly written as if solid."""
+    array = section.GetCellData().GetArray("material")
+    if array is None:
+        print("  the cut carries no material: regions skipped -- rerun the detach step")
+        return []
+    tags = vtk_to_numpy(array)
+    cells = cells_of(section, "polys")
+    domain = Polygon(polygon)
+    found = {}
+    for tag in np.unique(tags):
+        found[tag] = unary_union(
+            [Polygon(flat[cell]) for cell, carries in zip(cells, tags) if carries == tag]
+        ).intersection(domain)
+
+    # the domain's boundary was smoothed off the staircase the cells make, so
+    # along the terrain it runs a little outside them: that sliver belongs to
+    # no material. It goes to whichever region it shares the most edge with,
+    # and the pieces then tile the domain exactly, which is the point of them
+    left = domain.difference(unary_union(list(found.values())))
+    slivers = left.geoms if left.geom_type == "MultiPolygon" else ([] if left.is_empty else [left])
+    for sliver in slivers:
+        tag = max(found, key=lambda t: sliver.intersection(found[t].boundary).length)
+        found[tag] = unary_union([found[tag], sliver])
+    if slivers:
+        print(
+            f"  {len(list(slivers))} sliver(s) between the smoothed boundary and the cells, "
+            f"{left.area:.0f} m2 in all: given to the material each borders most"
+        )
+
+    pieces = []
+    for tag, shape in found.items():
+        parts = shape.geoms if shape.geom_type == "MultiPolygon" else [shape]
+        parts = sorted((p for p in parts if not p.is_empty), key=lambda p: -p.area)
+        print(
+            f"  material {tag:g}: {int((tags == tag).sum()):,} cut cells -> "
+            f"{len(parts)} piece(s), {shape.area:,.0f} m2 of the domain's "
+            f"{domain.area:,.0f}",
+            flush=True,
+        )
+        for part in parts:
+            if part.interiors:
+                print(
+                    f"    a piece has {len(part.interiors)} hole(s), "
+                    f"{sum(Polygon(r).area for r in part.interiors):,.0f} m2: left out"
+                )
+            pieces.append((tag, np.array(orient(Polygon(part.exterior)).exterior.coords)[:-1]))
+    return pieces
+
+
+def write_regions(path, pieces):
+    """The pieces as a four-column table and as polygons to look at."""
+    rows = np.vstack(
+        [
+            np.column_stack([ring, np.full(len(ring), tag), np.full(len(ring), n)])
+            for n, (tag, ring) in enumerate(pieces)
+        ]
+    )
+    np.savetxt(
+        path.with_suffix(".txt"), rows, fmt="%.4f %.4f %g %d",
+        header="x y material piece", comments="",
+    )
+
+    flat = np.column_stack([rows[:, :2], np.zeros(len(rows))])
+    sizes = [len(ring) for _, ring in pieces]
+    offsets = np.concatenate([[0], np.cumsum(sizes)])
+    mesh = vtkPolyData()
+    vtk_points = vtkPoints()
+    vtk_points.SetData(numpy_to_vtk(np.ascontiguousarray(flat), deep=True))
+    polys = vtkCellArray()
+    polys.SetData(
+        numpy_to_vtkIdTypeArray(offsets.astype(np.int64), deep=True),
+        numpy_to_vtkIdTypeArray(np.arange(len(flat), dtype=np.int64), deep=True),
+    )
+    mesh.SetPoints(vtk_points)
+    mesh.SetPolys(polys)
+    material = numpy_to_vtk(np.array([tag for tag, _ in pieces], dtype=float), deep=True)
+    material.SetName("material")
+    mesh.GetCellData().AddArray(material)
+    writer = vtkXMLPolyDataWriter()
+    writer.SetFileName(str(path.with_suffix(".vtp")))
+    writer.SetInputData(mesh)
+    if not writer.Write():
+        raise RuntimeError(f"vtkXMLPolyDataWriter failed on {path}")
+    print(
+        f"wrote {path.with_suffix('.txt').name} and {path.with_suffix('.vtp').name}: "
+        f"{len(pieces)} pieces, {len(rows):,} points"
+    )
+
+
 def write_flat(path, chains):
     """Two columns of x and y for the model, and the same as lines to look at."""
     rows = np.vstack(chains)
@@ -505,11 +623,14 @@ def main(argv=None):
     )
 
     flat = flatten(vtk_to_numpy(section.GetPoints().GetData()), normal, origin)
-    rim = outline(flat, cells_of(section, "polys"))
-    whole = smooth(flat[rim])
+    shape = dissolve(flat, cells_of(section, "polys"))
+    whole = smooth(outline(shape))
     write_flat(case.output / "profile", [np.vstack([whole, whole[0]])])
     polygon = clip(whole, BOX)
     write_flat(case.output / "domain", [np.vstack([polygon, polygon[0]])])
+    pieces = regions(section, flat, polygon)
+    if pieces:
+        write_regions(case.output / "regions", pieces)
 
     for surface in surfaces:
         tri = in_grid_frame(case, surface)
