@@ -11,6 +11,12 @@ outward = [0.0, 1.0, 0.0]       # rotate the least-squares plane horizontal, out
 trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
 voxel_size = 0.25                # down-sampling before the reconstruction (points are ~0.1 m apart)
 poisson_depth = 10               # octree depth of the reconstruction
+# the window of wall to work on, drawn on it seen from the front: X and Z in
+# UTM32N, a prism through the rock along y. origin places it: it is where the
+# cloud's own zero sits, the (530019.393, 5079649.724) the README's Data
+# section records
+area = "../data/regions/San Martino area of interest.txt"
+origin = [530019.39293486, 5079649.72368661]
 
 # in the grid's frame (the rotated one): the grid step logs the domain it builds
 [grid]
