@@ -5,25 +5,38 @@ name = "san_martino"             # also names the SPEED mesh: speed/san_martino.
 output = "../output/san_martino"
 
 [dtm]
-points = "../data/xyz/san_martino.xyz.gz"  # the LAS cut to `area`, x/y centred, z elevation; numpy reads the gzip
-surface = "poisson"              # overhangs: not z = f(x, y), reconstructed as a 3D surface
-outward = [0.0, 1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
-trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
-voxel_size = 0.25                # down-sampling before the reconstruction (points are ~0.1 m apart)
-poisson_depth = 10               # octree depth of the reconstruction
+# the grid is carved against `stl`: the surface already reconstructed and
+# already cut to the window by `python -m dtm_voxelization.area CASE`, which
+# reads `points` and writes it. That costs a minute and has no reason to be
+# paid at every grid, so it is made once and kept. pipeline.sh makes it when
+# it is missing. With surface = "poisson" the grid reconstructs from `points`
+# itself, every time.
+points = "../data/xyz/san_martino.xyz.gz"  # the LAS cut to `area`, x/y centred, z elevation
+surface = "stl"                  # the surface comes from the file below, not from the points
+stl = "../output/san_martino/wall_in_area.stl"
+outward = [0.0, -1.0, 0.0]       # out of the rock: the rock is the side at GREATER y
+trim_to_footprint = true         # domain: largest rectangle inside the surface's footprint
 # the window of wall to work on, drawn on it seen from the front: X and Z in
-# UTM32N, a prism through the rock along y. The points above were already cut
-# to it by las_export, so what is left for the surface is the reconstruction's
-# own bulge past the data. origin places the window: it is where the cloud's
-# zero sits, which las_export prints after the cut
+# UTM32N, a prism through the rock along y. The cloud was cut to it by
+# las_export; origin places it, and is where the cloud's zero sits.
 area = "../data/regions/San Martino area of interest.txt"
 origin = [530019.04000, 5079646.71500]
 
 # in the grid's frame (the rotated one): the grid step logs the domain it builds
 [grid]
-target_cells = 100_000           # carved cells to aim for (accepted within +-30%)
-z_padding = 30.0                 # rock behind the wall below its deepest point, air above
-inner_regions = [[-27.0, 27.0, -26.0, -10.0]]   # level-2 rectangle, over the main re-entrance
+target_cells = 1_000_000          # carved cells to aim for (accepted within +-30%)
+z_padding = 15.0                 # rock behind the wall below its deepest point, air above
+# the level-2 rectangle, over the re-entrance this case is about: the one at
+# mid height, where the vertical crosses the surface three times or more and
+# the void under the rock runs 23.8 m at the median and 35.5 m at most. The
+# two at the wall's foot are left coarse for now.
+#
+# It is the measured patch (x 5.4..46.5, y -18.9..-11.3) grown around it: half
+# its height again above and three quarters below -- the grid's x is the
+# wall's elevation -- and its own width to each side, the grid's y being the
+# wall's horizontal. The rock under a re-entrance wants room, and the carving
+# is only as good as the cells around it.
+inner_regions = [[-25.4, 67.1, -26.5, -3.7]]
 region_z_padding = 5.0           # clearance around the wall inside it
 outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
                                  # never less than 1.5 coarse cells wider in x and y

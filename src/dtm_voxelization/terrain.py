@@ -5,12 +5,15 @@ Two kinds, chosen by the case's `surface`:
 - HeightField: the terrain is z = f(x, y), the linear interpolant of the
   points over their Delaunay triangulation in (x, y). A hex is kept when its
   top lies below the terrain at its (x, y) centroid.
-- PoissonSurface: any surface, overhangs and re-entrances included,
-  reconstructed from the points by screened Poisson (Open3D, imported only
-  here). A hex is kept when the top of its centroid's vertical segment is in
-  the rock -- an odd number of surface crossings straight above it -- and the
-  segment down to the hex bottom crosses nothing, i.e. no overhang cuts the
-  hex. On a surface that is a height field this is the same rule as above.
+- Surface: any triangulated surface, overhangs and re-entrances included. A
+  hex is kept when the top of its centroid's vertical segment is in the rock
+  -- an odd number of surface crossings straight above it -- and the segment
+  down to the hex bottom crosses nothing, i.e. no overhang cuts the hex. On a
+  surface that is a height field this is the same rule as above. It comes
+  either from a reconstruction (PoissonSurface, screened Poisson over the
+  points with Open3D, imported only here) or from an STL already on disk
+  (`surface = "stl"`), which is how a wall is meshed again without paying for
+  the reconstruction every time.
 
 Both answer what the grid asks: the domain rectangle, the surface's z range,
 the rock fraction of any box (for sizing), the terrain's z range over a
@@ -169,14 +172,13 @@ class HeightField:
         export_triangles(path, points, grid_triangles(nx, ny))
 
 
-class PoissonSurface:
-    """Any surface, reconstructed from the points by screened Poisson."""
+class Surface:
+    """Any triangulated surface, carved against by counting ray crossings."""
 
-    def __init__(self, points, voxel_size, depth, trim_to_footprint):
+    def __init__(self, points, vertices, triangles, trim_to_footprint):
         import open3d as o3d
 
         self.o3d = o3d
-        t0 = time.perf_counter()
         self.points = points
         if trim_to_footprint:
             self.xmin, self.xmax, self.ymin, self.ymax = footprint_rectangle(points[:, :2])
@@ -185,35 +187,19 @@ class PoissonSurface:
         inside = self._in_rectangle(self.xmin, self.xmax, self.ymin, self.ymax)
         self.zmin, self.zmax = float(points[inside, 2].min()), float(points[inside, 2].max())
 
-        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-        cloud = cloud.voxel_down_sample(voxel_size)
-        cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4 * voxel_size, max_nn=30))
-        cloud.orient_normals_to_align_with_direction([0.0, 0.0, 1.0])
-        # propagate the orientation along the surface: under an overhang the
-        # true normal points down, which a fixed direction would get wrong
-        cloud.orient_normals_consistent_tangent_plane(15)
-        # np.asarray views Open3D's buffer, which reassigning the normals frees
-        if np.asarray(cloud.normals)[:, 2].mean() < 0:
-            cloud.normals = o3d.utility.Vector3dVector(-np.asarray(cloud.normals).copy())
-        normals = np.asarray(cloud.normals).copy()
-        print(
-            f"  {len(points):,} points -> {len(cloud.points):,} after a {voxel_size} voxel down-sample; "
-            f"normals pointing down (overhang undersides): {100 * (normals[:, 2] < 0).mean():.2f}%",
-            flush=True,
+        self.vertices, self.triangles = vertices, triangles
+        mesh = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(triangles)
         )
-
-        mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-            cloud, depth=depth, scale=1.1, linear_fit=False
-        )
-        self.vertices = np.asarray(mesh.vertices)
-        self.triangles = np.asarray(mesh.triangles)
         self.scene = o3d.t.geometry.RaycastingScene()
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
         print(
-            f"  poisson depth {depth}: {len(self.vertices):,} vertices, {len(self.triangles):,} triangles, "
-            f"built in {time.perf_counter() - t0:.1f}s",
+            f"  surface: {len(vertices):,} vertices, {len(triangles):,} triangles, over "
+            f"x=[{self.xmin:.2f},{self.xmax:.2f}] y=[{self.ymin:.2f},{self.ymax:.2f}], "
+            f"z from {self.zmin:.2f} to {self.zmax:.2f}",
             flush=True,
         )
+
 
     def _in_rectangle(self, rxmin, rxmax, rymin, rymax):
         x, y = self.points[:, 0], self.points[:, 1]
@@ -282,13 +268,72 @@ class PoissonSurface:
         export_triangles(path, self.vertices, self.triangles, keep=inside)
 
 
+class PoissonSurface(Surface):
+    """A surface reconstructed from the points by screened Poisson."""
+
+    def __init__(self, points, voxel_size, depth, trim_to_footprint):
+        import open3d as o3d
+
+        t0 = time.perf_counter()
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+        cloud = cloud.voxel_down_sample(voxel_size)
+        cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4 * voxel_size, max_nn=30))
+        cloud.orient_normals_to_align_with_direction([0.0, 0.0, 1.0])
+        # propagate the orientation along the surface: under an overhang the
+        # true normal points down, which a fixed direction would get wrong
+        cloud.orient_normals_consistent_tangent_plane(15)
+        # np.asarray views Open3D's buffer, which reassigning the normals frees
+        if np.asarray(cloud.normals)[:, 2].mean() < 0:
+            cloud.normals = o3d.utility.Vector3dVector(-np.asarray(cloud.normals).copy())
+        normals = np.asarray(cloud.normals).copy()
+        print(
+            f"  {len(points):,} points -> {len(cloud.points):,} after a {voxel_size} voxel down-sample; "
+            f"normals pointing down (overhang undersides): {100 * (normals[:, 2] < 0).mean():.2f}%",
+            flush=True,
+        )
+
+        mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+            cloud, depth=depth, scale=1.1, linear_fit=False
+        )
+        print(
+            f"  poisson depth {depth}: {len(mesh.vertices):,} vertices, "
+            f"{len(mesh.triangles):,} triangles, built in {time.perf_counter() - t0:.1f}s",
+            flush=True,
+        )
+        super().__init__(
+            points, np.asarray(mesh.vertices), np.asarray(mesh.triangles), trim_to_footprint
+        )
+
 def build(case):
     """(terrain, rotation, center) for the case, the terrain in the grid's frame."""
     if case.surface == "height_field":
         return HeightField(case.points, case.trim_to_footprint), np.eye(3), np.zeros(3)
+    if case.surface == "stl":
+        return stl_surface(case)
 
     x, y, z = _load_xyz(case.points)
     return poisson_surface(np.column_stack([x, y, z]), case)
+
+
+def stl_surface(case):
+    """(surface, rotation, center) from a surface already on disk.
+
+    The case's `stl` is the surface, in the cloud's frame, and the frame the
+    grid is built in is read off it: it is the same wall, so its least-squares
+    plane is the cloud's. Nothing of the reconstruction is paid for twice,
+    which on San Martino is a minute a run. `points` still names the cloud it
+    was made from, which area.py reads to make it again."""
+    mesh = meshio.read(case.stl)
+    vertices, triangles = mesh.points, mesh.cells_dict["triangle"]
+    print(f"  {case.stl.name}: {len(vertices):,} vertices, {len(triangles):,} triangles")
+    rotation, center = frame.compute(vertices, case.outward)
+    print(
+        f"  frame: {'identity' if frame.is_identity(rotation, center) else 'least-squares plane'}, "
+        f"normal {rotation[2].round(4)}, center {center.round(3)}",
+        flush=True,
+    )
+    here = frame.to_grid(vertices, rotation, center)
+    return Surface(here, here, triangles, case.trim_to_footprint), rotation, center
 
 
 def poisson_surface(points, case):

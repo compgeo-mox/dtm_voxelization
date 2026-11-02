@@ -7,6 +7,7 @@
 # The default case is cases/rialba.toml, and paths are relative to the
 # repository, which is where the container starts. The steps are
 #
+#   area CASE                      the wall's surface, cut to the window
 #   dtm-voxelization CASE          grid, surfaces, cut, detach, speed
 #   source_points CASE             the surveyed sources, dropped on the grid
 #   source_mesh CASE               the box around them, cut out of the grid
@@ -17,10 +18,12 @@
 # left by hand. Each step is timed and the whole thing stops at the first one
 # that fails, with its exit status.
 #
-# The last three are only run when the case has what they need -- surveyed
-# sources for the first two, fracture surfaces for the section -- so a case
-# like San Martino, a bare wall, goes through the same one command and comes
-# out with the same archive.
+# The first runs only when the case draws its surface from an `stl` that is
+# not there yet -- on a fresh clone of a wall case, where the reconstruction has
+# never been made -- and the last three only when the case has what they need:
+# surveyed sources for two of them, fracture surfaces for the section. So a
+# case like San Martino, a bare wall, goes through the same one command and
+# comes out with the same archive.
 #
 # Everything written then lands in one archive, named after the job (PBS_JOBID)
 # when there is one and after the hour otherwise, so a run is a single file to
@@ -50,13 +53,18 @@ step() {
 
 # what the case holds, and so which steps have anything to do: the output
 # folder, whether there are source points, whether there are surfaces
-read -r output sources surfaces <<< "$(python -c "import sys
+read -r output sources surfaces wall from_file <<< "$(python -c "import sys
 from dtm_voxelization.case import load_case
 case = load_case(sys.argv[1])
-print(case.output, case.source_points is not None, bool(case.surfaces))" "${case_file}")"
+print(case.output, case.source_points is not None, bool(case.surfaces),
+      case.stl or '-', case.stl is not None)" "${case_file}")"
 echo "output:   ${output}"
-echo "source points: ${sources}, surfaces: ${surfaces}"
+echo "source points: ${sources}, surfaces: ${surfaces}, surface from a file: ${from_file}"
 echo
+
+if [ "${from_file}" = "True" ] && [ ! -f "${wall}" ]; then
+    step "surface" python -m dtm_voxelization.area "${case_file}"
+fi
 
 step "pipeline" dtm-voxelization "${case_file}"
 if [ "${sources}" = "True" ]; then

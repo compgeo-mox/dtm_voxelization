@@ -50,6 +50,7 @@ class Case:
     source_points: Path | None  # survey to refine around, "Est,Nord" in UTM32N
     conglomerate: Path | None  # outline of the conglomerate, X Y Z in UTM32N, z unused
     deposit: Path | None  # outline of the deposit, the only place the planes hold
+    stl: Path | None  # the surface itself, when `surface` is "stl"
     area: Path | None  # area of interest, X and Z in UTM32N: a window on the wall
     origin: tuple | None  # where the cloud's own zero sits in UTM32N, to place it
     validate_mesh: bool
@@ -115,10 +116,14 @@ def load_case(path):
             {"outward", "area", "origin"},
             where,
         )
+    elif dtm.get("surface") == "stl":
+        _check_keys(
+            dtm, {"points", "surface", "trim_to_footprint", "stl"}, {"area", "origin", "outward"}, where
+        )
     elif dtm.get("surface") == "height_field":
         _check_keys(dtm, {"points", "surface", "trim_to_footprint"}, {"area", "origin"}, where)
     else:
-        raise ValueError(f"{where}: surface must be 'height_field' or 'poisson'")
+        raise ValueError(f"{where}: surface must be 'height_field', 'poisson' or 'stl'")
     if "outward" in dtm and len(dtm["outward"]) != 3:
         raise ValueError(f"{where}: outward must be [x, y, z]")
 
@@ -186,6 +191,7 @@ def load_case(path):
         source_points=root / grid["source_points"] if "source_points" in grid else None,
         conglomerate=root / data["conglomerate"] if "conglomerate" in data else None,
         deposit=root / data["deposit"] if "deposit" in data else None,
+        stl=root / dtm["stl"] if "stl" in dtm else None,
         area=root / dtm["area"] if "area" in dtm else None,
         origin=tuple(float(v) for v in dtm["origin"]) if "origin" in dtm else None,
         validate_mesh=bool(grid["validate_mesh"]),

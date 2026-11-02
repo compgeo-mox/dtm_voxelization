@@ -25,8 +25,9 @@ centred on the case's origin, z the elevation -- not in the grid's. The window
 is drawn in that frame, and these three are for looking at it:
 
 - wall.stl: the whole reconstruction.
-- wall_in_area.stl: the same with only the triangles whose centre falls in the
-  area, which is the piece the grid should be built on.
+- wall_in_area.stl, or the case's own `stl` when it names one: the same with
+  only the triangles whose centre falls in the area, which is the piece the
+  grid is built on.
 - area_of_interest.stl: the prism itself, as the band its walls make across
   the surface's own span of y, closed at both ends.
 """
@@ -153,8 +154,10 @@ def main(argv=None):
         f"in the area ({100 * keep.mean():.1f}%)",
         flush=True,
     )
-    export_triangles(case.output / "wall_in_area.stl", vertices, surface.triangles, keep=keep)
-    print(f"wrote {case.output / 'wall_in_area.stl'}: the piece inside the window")
+    cut = case.stl if case.stl is not None else case.output / "wall_in_area.stl"
+    cut.parent.mkdir(parents=True, exist_ok=True)
+    export_triangles(cut, vertices, surface.triangles, keep=keep)
+    print(f"wrote {cut}: the piece inside the window")
 
     span = (vertices[:, 1].min(), vertices[:, 1].max())
     walls, triangles = prism(corners, span)
