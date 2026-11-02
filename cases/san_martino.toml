@@ -5,18 +5,19 @@ name = "san_martino"             # also names the SPEED mesh: speed/san_martino.
 output = "../output/san_martino"
 
 [dtm]
-points = "../data/xyz/san_martino.xyz"   # X Y Z, 2-line header; x/y centred, z elevation
+points = "../data/xyz/san_martino.xyz"   # X Y Z, 2-line header; the LAS cut to `area`, x/y centred, z elevation
 surface = "poisson"              # overhangs: not z = f(x, y), reconstructed as a 3D surface
 outward = [0.0, 1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
 trim_to_footprint = true         # domain: largest rectangle inside the points' footprint
 voxel_size = 0.25                # down-sampling before the reconstruction (points are ~0.1 m apart)
 poisson_depth = 10               # octree depth of the reconstruction
 # the window of wall to work on, drawn on it seen from the front: X and Z in
-# UTM32N, a prism through the rock along y. origin places it: it is where the
-# cloud's own zero sits, the (530019.393, 5079649.724) the README's Data
-# section records
+# UTM32N, a prism through the rock along y. The points above were already cut
+# to it by las_export, so what is left for the surface is the reconstruction's
+# own bulge past the data. origin places the window: it is where the cloud's
+# zero sits, which las_export prints after the cut
 area = "../data/regions/San Martino area of interest.txt"
-origin = [530019.39293486, 5079649.72368661]
+origin = [530019.04000, 5079646.71500]
 
 # in the grid's frame (the rotated one): the grid step logs the domain it builds
 [grid]

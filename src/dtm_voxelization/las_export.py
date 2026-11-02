@@ -1,6 +1,13 @@
 """A LAS point cloud as the repo's .xyz, plus a .vtp and an .stl for ParaView:
-`python -m dtm_voxelization.las_export CLOUD.las CASE.toml`, all three written
-next to the cloud.
+`python -m dtm_voxelization.las_export CLOUD.las CASE.toml`.
+
+The .xyz goes where the case says its points are, which is in the repository
+and is the point of running this; the .vtp and the .stl are for looking at,
+and are far too big to keep, so they stay next to the cloud.
+
+A case with an `area` is cut to it first, in UTM, where the area is drawn:
+only the points inside the window reach the .xyz, and the centring is then on
+what is left, so `origin` in the case has to be set to the mean this prints.
 
 All three are in the frame the cases use (see the README's Data section):
 x/y centred on the cloud's mean, z elevation. The mean is rounded to 1 mm, the
@@ -25,6 +32,8 @@ from pathlib import Path
 
 import laspy
 import numpy as np
+import shapely
+from shapely.geometry import Polygon
 from scipy.spatial import cKDTree
 from vtkmodules.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 from vtkmodules.vtkCommonCore import vtkPoints
@@ -102,6 +111,20 @@ def main(argv=None):
     points = np.column_stack([las.x, las.y, las.z])
     print(f"read {las_path}: {len(points):,} points in {time.perf_counter() - t0:.1f}s", flush=True)
 
+    if case.area is not None:
+        corners = np.loadtxt(case.area, skiprows=1)  # in UTM, as the points are here
+        shape = Polygon(corners).buffer(0)
+        shapely.prepare(shape)
+        keep = shapely.contains_xy(shape, points[:, 0], points[:, 2])
+        print(
+            f"  {case.area.name}: {int(keep.sum()):,} of {len(points):,} points stand in "
+            f"the area ({100 * keep.mean():.1f}%)",
+            flush=True,
+        )
+        if not keep.any():
+            raise SystemExit(f"{case.area}: no point of the cloud falls in the area")
+        points = points[keep]
+
     mean = np.round(points[:, :2].mean(axis=0), 3)
     points[:, :2] -= mean
     print(
@@ -113,10 +136,15 @@ def main(argv=None):
     )
 
     stem = las_path.with_suffix("")
+    case.points.parent.mkdir(parents=True, exist_ok=True)
     save_xyz(
-        stem.with_suffix(".xyz"),
+        case.points,
         points,
         f"{las_path.name}, x/y centred on {mean[0]:.3f} {mean[1]:.3f}, z elevation",
+    )
+    print(
+        f"  set [dtm] origin = [{mean[0]:.5f}, {mean[1]:.5f}] in {case.name} to match",
+        flush=True,
     )
     write_vtp(stem.with_suffix(".vtp"), points)
     write_poisson_stl(stem.with_suffix(".stl"), points, case)

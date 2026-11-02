@@ -284,8 +284,11 @@ visible, and results must land in one of them to survive. See the header of
 - `data/surfaces/frattura_verticale_shifted.stl` -- a vertical fracture, x/y
   already in that frame, z still absolute (hence the case's translation).
 - `data/xyz/san_martino.xyz` -- the San Martino wall from photogrammetry,
-  818,623 points: UTM32N minus (530019.39293486, 5079649.72368661) in x/y,
-  z elevation.
+  2,020,328 points: UTM32N minus (530019.040, 5079646.715) in x/y, z
+  elevation. It is `SANMARTINO_GROUND_Qorto.las` (16.5 M points, outside the
+  repository) cut to `data/regions/San Martino area of interest.txt`, by
+  `python -m dtm_voxelization.las_export CLOUD.las cases/san_martino.toml`,
+  which writes it here and says what to set the case's `origin` to.
 
 ## Issues
 
