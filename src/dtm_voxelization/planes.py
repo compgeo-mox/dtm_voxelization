@@ -190,7 +190,19 @@ Both bodies stand on the upper plane: the conglomerate takes
 
     A hex goes by its centre, so the planes and the outlines cut along cell
     faces -- they are not conformed to, which at a metre of cell is a metre of
-    error on surfaces known to far less than that."""
+    error on surfaces known to far less than that.
+
+    The planes and their fit are Rialba's own, and so are the outlines that
+    say where they hold: a case carrying neither is one body of one rock, and
+    gets ROCK_TAG throughout without any of this being asked of it."""
+    if case.deposit is None and case.conglomerate is None:
+        print(
+            f"  no deposit or conglomerate outline: one material, tag {ROCK_TAG}, "
+            f"over all {len(hexes):,} hexes",
+            flush=True,
+        )
+        return np.full(len(hexes), ROCK_TAG)
+
     middles = points[hexes].mean(axis=1)
     sink = under_the_slope(case)
     upper = surveyed(middles[:, :2], sink + DROPS[0])
