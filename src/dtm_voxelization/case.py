@@ -117,8 +117,13 @@ def load_case(path):
             where,
         )
     elif dtm.get("surface") == "stl":
+        # voxel_size and poisson_depth are not the grid's business here -- it
+        # carves against `stl` -- but area.py needs them to make that file
         _check_keys(
-            dtm, {"points", "surface", "trim_to_footprint", "stl"}, {"area", "origin", "outward"}, where
+            dtm,
+            {"points", "surface", "trim_to_footprint", "stl"},
+            {"area", "origin", "outward", "voxel_size", "poisson_depth"},
+            where,
         )
     elif dtm.get("surface") == "height_field":
         _check_keys(dtm, {"points", "surface", "trim_to_footprint"}, {"area", "origin"}, where)

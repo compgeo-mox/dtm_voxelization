@@ -15,6 +15,8 @@ points = "../data/xyz/san_martino.xyz.gz"  # the LAS cut to `area`, x/y centred,
 surface = "stl"                  # the surface comes from the file below, not from the points
 stl = "../output/san_martino/wall_in_area.stl"
 outward = [0.0, -1.0, 0.0]       # out of the rock: the rock is the side at GREATER y
+voxel_size = 0.25                # down-sampling before the reconstruction, which only
+poisson_depth = 10               # area.py does: the grid carves against the stl above
 trim_to_footprint = true         # domain: largest rectangle inside the surface's footprint
 # the window of wall to work on, drawn on it seen from the front: X and Z in
 # UTM32N, a prism through the rock along y. The cloud was cut to it by

@@ -139,6 +139,12 @@ def main(argv=None):
     corners = window(case)
     points = cloud_of(case, argv[1] if len(argv) > 1 else None)
 
+    if case.voxel_size is None or case.poisson_depth is None:
+        raise SystemExit(
+            f"{case.name}: reconstructing wants [dtm] voxel_size and poisson_depth, "
+            "which a case carving against an `stl` can otherwise do without"
+        )
+
     # the reconstruction wants the wall lying down, its normals seeded upwards;
     # what comes out is turned back, so all three files share the cloud's frame
     surface, rotation, center = poisson_surface(points, case)
