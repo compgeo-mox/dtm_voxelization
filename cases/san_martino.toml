@@ -5,7 +5,7 @@ name = "san_martino"             # also names the SPEED mesh: speed/san_martino.
 output = "../output/san_martino"
 
 [dtm]
-points = "../data/xyz/san_martino.xyz"   # X Y Z, 2-line header; the LAS cut to `area`, x/y centred, z elevation
+points = "../data/xyz/san_martino.xyz.gz"  # the LAS cut to `area`, x/y centred, z elevation; numpy reads the gzip
 surface = "poisson"              # overhangs: not z = f(x, y), reconstructed as a 3D surface
 outward = [0.0, 1.0, 0.0]       # rotate the least-squares plane horizontal, out of the rock up
 trim_to_footprint = true         # domain: largest rectangle inside the points' footprint

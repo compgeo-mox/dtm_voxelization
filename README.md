@@ -283,12 +283,14 @@ visible, and results must land in one of them to survive. See the header of
   (527837.392605, 5082191.470488, 474.976610), z included.
 - `data/surfaces/frattura_verticale_shifted.stl` -- a vertical fracture, x/y
   already in that frame, z still absolute (hence the case's translation).
-- `data/xyz/san_martino.xyz` -- the San Martino wall from photogrammetry,
+- `data/xyz/san_martino.xyz.gz` -- the San Martino wall from photogrammetry,
   2,020,328 points: UTM32N minus (530019.040, 5079646.715) in x/y, z
-  elevation. It is `SANMARTINO_GROUND_Qorto.las` (16.5 M points, outside the
-  repository) cut to `data/regions/San Martino area of interest.txt`, by
-  `python -m dtm_voxelization.las_export CLOUD.las cases/san_martino.toml`,
-  which writes it here and says what to set the case's `origin` to.
+  elevation. It is `SANMARTINO_GROUND_Qorto.las` (16.5 M points, 429 MB, which
+  GitHub would not take even gzipped at 172 MB) cut to `data/regions/San
+  Martino area of interest.txt`, by `python -m dtm_voxelization.las_export
+  CLOUD.las cases/san_martino.toml`, which writes it here and says what to set
+  the case's `origin` to. Gzipped it is 16 MB against 49, and numpy reads and
+  writes that by the name alone, so a case can point at either.
 
 ## Issues
 

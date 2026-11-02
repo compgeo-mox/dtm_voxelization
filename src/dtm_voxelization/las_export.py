@@ -2,7 +2,8 @@
 `python -m dtm_voxelization.las_export CLOUD.las CASE.toml`.
 
 The .xyz goes where the case says its points are, which is in the repository
-and is the point of running this; the .vtp and the .stl are for looking at,
+and is the point of running this -- name it .xyz.gz there and it is written
+compressed, which on a wall of two million points is 16 MB against 49; the .vtp and the .stl are for looking at,
 and are far too big to keep, so they stay next to the cloud.
 
 A case with an `area` is cut to it first, in UTM, where the area is drawn:
