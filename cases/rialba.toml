@@ -17,7 +17,13 @@ surface = "height_field"            # the terrain is z = f(x, y): linear interpo
 trim_to_footprint = false           # the points cover the whole rectangle
 
 [grid]
-target_cells = 2_500_000           # carved cells to aim for (accepted within +-30%)
+# carved cells to aim for (accepted within +-30%): coarse hex 47.0 m, 15.7 in
+# the outer region, 5.2 in the inner one and 1.74 around the surfaces. 2.5M
+# gave 43.1 / 14.4 / 4.8 / 1.6 until the refinement around the surfaces became
+# one box holding the towers too, which costs about a third of the cells; 4M
+# buys that resolution back exactly, 3.5M is where the inner hex drops back
+# under the 5 m of planes.BACK_DEPTH, and this is the middle of the two
+target_cells = 3_000_000
 z_padding = 50.0                 # domain below the lowest and above the highest DTM point
 # level-2 rectangles [xmin, xmax, ymin, ymax]. Each takes its own z range from
 # the terrain over its own rectangle. Rectangles may INTERSECT: ones closer

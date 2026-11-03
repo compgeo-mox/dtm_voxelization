@@ -614,22 +614,32 @@ def source_box(case, terrain, around):
 
 
 def around_boxes(case, rotation, center):
-    """The surfaces the case wants a further split around, as the box each one
-    occupies in the grid's frame. The margin is added per build, once the cell
-    size is known."""
-    around = {}
-    for surface in case.surfaces:
-        if surface.refine_around:
-            corners = frame.to_grid(
-                surface_triangles(surface).reshape(-1, 3), rotation, center
-            )
-            lo, hi = corners.min(axis=0), corners.max(axis=0)
-            around[surface.name] = (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])
-            print(
-                f"refining around {surface.name}: x=[{lo[0]:.1f},{hi[0]:.1f}] "
-                f"y=[{lo[1]:.1f},{hi[1]:.1f}] z=[{lo[2]:.1f},{hi[2]:.1f}]"
-            )
-    return around
+    """The surfaces the case wants a further split around, as one box holding
+    all of them in the grid's frame. The margin is added per build, once the
+    cell size is known.
+
+    One box and not one per surface: a surface is a slab and the rock beside
+    it is not, so boxes drawn surface by surface refine the fractures and
+    leave the towers between them at the level above -- at Rialba, bodies of
+    4.8 m hexes standing between walls of 1.6 m ones. The box over all of them
+    holds the towers as well, and the air in it is carved away, but it is not
+    free: at a fixed 2.5M cells it takes the coarse hex from 43.1 m to 50.5,
+    and the case asks for 4M instead, which buys that resolution back."""
+    corners = [
+        frame.to_grid(surface_triangles(surface).reshape(-1, 3), rotation, center)
+        for surface in case.surfaces
+        if surface.refine_around
+    ]
+    if not corners:
+        return {}
+    names = [s.name for s in case.surfaces if s.refine_around]
+    lo = np.min([c.min(axis=0) for c in corners], axis=0)
+    hi = np.max([c.max(axis=0) for c in corners], axis=0)
+    print(
+        f"refining around {len(names)} surface(s) ({', '.join(names)}) in one box: "
+        f"x=[{lo[0]:.1f},{hi[0]:.1f}] y=[{lo[1]:.1f},{hi[1]:.1f}] z=[{lo[2]:.1f},{hi[2]:.1f}]"
+    )
+    return {"the surfaces": (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])}
 
 
 def run(case):
