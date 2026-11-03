@@ -67,7 +67,12 @@ EAST = np.array([
     [17.4, 725.0], [18.9, 735.0], [19.2, 745.0], [17.6, 755.0], [16.4, 765.0],
     [15.9, 775.0], [15.4, 785.0], [15.4, 795.0], [13.9, 805.0], [13.2, 815.0],
 ])
-YMAX = 810.0  # past the grid's own 805.4, so the footprint covers the last row
+# the outline's north edge. The grid rounds its own north edge up to a whole
+# number of cells, past the DTM's 805.4 -- 816.3 at 2.5M cells -- and the last
+# row of hexes has its centres past 810, where this used to stop: they came
+# out as rock, one row of them, along the whole end of the domain. It only has
+# to sit past whatever the build rounds to, and there are no hexes out here.
+YMAX = 900.0
 # marching squares: which edges of a cell the zero level joins, by the corners
 # that are negative. 0 is the edge between corner 0 (x, y) and corner 1
 # (x + h, y), then round the cell. The two saddles, 5 and 10, are cut the way
