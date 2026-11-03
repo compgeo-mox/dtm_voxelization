@@ -248,7 +248,15 @@ def back_deposit(case, points, hexes, middles, tags, conglomerate, in_conglomera
     ground = load_dtm_interpolator(case.points)(middles[:, :2])
     corners_z = points[:, 2][hexes]  # (n, 8), not the whole (n, 8, 3): this runs on 2.5M hexes
     heights = corners_z.max(axis=1) - corners_z.min(axis=1)
-    skin = ground - middles[:, 2] < np.maximum(BACK_DEPTH, heights)
+    # how deep the hex's TOP stands under the terrain, not its centre. The
+    # carving keeps a hex when its top is under the ground over its middle
+    # (terrain.keep), so the top hex of a column carries its centre as much as
+    # one and a half cells down -- 7.3 m where the cells are 4.8 -- and a depth
+    # read there misses it: at Rialba it left 43 per cent of the columns with
+    # no layer at all. Read at the top, a hex is in when it reaches into the
+    # top BACK_DEPTH metres of ground, which is what a layer that thick is, and
+    # the top hex of a column is in whatever its size.
+    skin = ground - corners_z.max(axis=1) < np.maximum(BACK_DEPTH, heights)
     in_back = footprint(back, middles[:, :2], "back deposit")
     take = skin & in_back & (tags != CONGLOMERATE_TAG)
     print(
