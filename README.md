@@ -215,14 +215,27 @@ in `data/regions/`, X Y Z in UTM32N with the z unused): `3` the
 `conglomerate` over the upper plane and `4` the `deposit` over it, each inside
 its own outline; `2` the layer the planes hold between them, which runs under
 both bodies; `1` everything else, outside the two outlines or under the lower
-plane. Then the quads: `5` lateral and bottom faces
-(bounding-box planes), `6` everything else on the boundary -- the carved
-terrain and both sides of every crack. So the labels run 1 to 6, the rock's
-four and the boundary's two, with no hole and nothing repeated -- SPEED reads quad and
+plane. Then `5`, the `back_deposit` behind the conglomerate, which is not a
+body between the planes but a surface layer: it takes the top `BACK_DEPTH`
+(5 m) of ground inside its outline, or the top hex where the hexes are taller
+than that, over the rock and the layer between the planes but never over the
+conglomerate's own top. Then the quads: `6` lateral and bottom faces
+(bounding-box planes), `7` everything else on the boundary -- the carved
+terrain and both sides of every crack. So the labels run 1 to 7, the rock's
+five and the boundary's two, with no hole and nothing repeated -- SPEED reads quad and
 hex labels out of the same column, which is why they do not share numbers. The
 label rides on `grid.vtu`, `detached.vtu` and `source_mesh.vtu` as the cell
 array `material`, and on `speed/<case>_materials.vtu` for the exported mesh. Tags are decided in the grid's frame; the mesh is written back
 in the DTM's frame.
+
+The outlines themselves, for Rialba, are made by `python -m
+dtm_voxelization.deposit_regions CASE.toml`, which writes the two the case
+names: the surveyed deposit carried south onto the SS36 along the arc that
+faces it (the road comes from a kmz in degrees, so this is the one step that
+wants `rasterio`), and the ground behind the conglomerate out to the end of y,
+closed over the conglomerate's own vertices and over the upper plane's outcrop
+where its wedge still shows material 2. It writes the curves to check them on
+beside the grid, draped over the terrain.
 
 `python -m dtm_voxelization.source_mesh CASE.toml` cuts the box around the
 source points out of `grid.vtu` and writes it as a mesh of its own, with the

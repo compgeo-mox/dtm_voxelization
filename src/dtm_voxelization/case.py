@@ -50,6 +50,7 @@ class Case:
     source_points: Path | None  # survey to refine around, "Est,Nord" in UTM32N
     conglomerate: Path | None  # outline of the conglomerate, X Y Z in UTM32N, z unused
     deposit: Path | None  # outline of the deposit, the only place the planes hold
+    back_deposit: Path | None  # outline of the deposit behind the conglomerate, a skin
     stl: Path | None  # the surface itself, when `surface` is "stl"
     area: Path | None  # area of interest, X and Z in UTM32N: a window on the wall
     origin: tuple | None  # where the cloud's own zero sits in UTM32N, to place it
@@ -105,7 +106,7 @@ def load_case(path):
         data = tomllib.load(f)
     root = path.parent
 
-    _check_keys(data, {"name", "output", "dtm", "grid"}, {"surfaces", "conglomerate", "deposit"}, path.name)
+    _check_keys(data, {"name", "output", "dtm", "grid"}, {"surfaces", "conglomerate", "deposit", "back_deposit"}, path.name)
 
     dtm = data["dtm"]
     where = f"{path.name} [dtm]"
@@ -196,6 +197,7 @@ def load_case(path):
         source_points=root / grid["source_points"] if "source_points" in grid else None,
         conglomerate=root / data["conglomerate"] if "conglomerate" in data else None,
         deposit=root / data["deposit"] if "deposit" in data else None,
+        back_deposit=root / data["back_deposit"] if "back_deposit" in data else None,
         stl=root / dtm["stl"] if "stl" in dtm else None,
         area=root / dtm["area"] if "area" in dtm else None,
         origin=tuple(float(v) for v in dtm["origin"]) if "origin" in dtm else None,

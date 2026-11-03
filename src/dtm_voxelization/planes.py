@@ -14,7 +14,7 @@ import shapely
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from .dtm_io import _load_xyz
+from .dtm_io import _load_xyz, load_dtm_interpolator
 from .shift_fracture import M, S  # the same Rialba mean and software shift
 
 # a surveyed plane, as 0.2230 X + 0.4732 Y - 0.8523 Z + d = 0 with d / -0.8523 given,
@@ -23,13 +23,17 @@ PLANE = (0.2230, 0.4732, -0.8523, 3221403.4962)
 # the SPEED scripts' Gauss-Boaga shift for the full Rialba (convert_stl_vtu.py,
 # topograpy_regions.py), which is where the grid's origin sits in Gauss-Boaga
 GAUSS_BOAGA = np.array([1527863.3, 5082212.3])
-# the rock in four, first, as a .mate is written: SPEED reads quad and hex
+# the rock in five, first, as a .mate is written: SPEED reads quad and hex
 # labels out of one column, and speed.py carries the boundary's two on from
-# here, so the six run 1 to 6 with nothing repeated and no hole
+# here, so the seven run 1 to 7 with nothing repeated and no hole
 ROCK_TAG = 1  # what none of the three below claims
 BETWEEN_TAG = 2  # the layer the planes hold, under the deposit and the conglomerate both
 CONGLOMERATE_TAG = 3  # over the upper plane, inside the conglomerate, deposit or not
 DEPOSIT_TAG = 4  # over the upper plane, inside the deposit, outside the conglomerate
+BACK_TAG = 5  # the deposit behind the conglomerate: a skin, and only at the top
+
+BACK_DEPTH = 5.0  # m of ground the back deposit takes, measured down from the terrain,
+# or one hex where the hexes are taller than that -- see back_deposit()
 
 DROPS = (0.0, 60.0)  # the planes to draw, below the one the fit leaves
 UNDER = 10.0  # m the first plane is wanted under the slope that runs parallel to it
@@ -140,6 +144,14 @@ def outline_of(path, what):
     return shape
 
 
+def seam_between(one, other):
+    """The splinters two footprints leave between them: the holes of their
+    union, which is what a contact digitized twice comes out as."""
+    union = unary_union([one, other])
+    parts = union.geoms if union.geom_type == "MultiPolygon" else [union]
+    return unary_union([Polygon(part.exterior) for part in parts]).difference(union)
+
+
 def sewn(deposit, conglomerate):
     """The two footprints with the slivers between them closed.
 
@@ -151,9 +163,7 @@ def sewn(deposit, conglomerate):
     conglomerate; no outer boundary moves."""
     if deposit is None or conglomerate is None:
         return deposit, conglomerate
-    union = unary_union([deposit, conglomerate])
-    parts = union.geoms if union.geom_type == "MultiPolygon" else [union]
-    seam = unary_union([Polygon(part.exterior) for part in parts]).difference(union)
+    seam = seam_between(deposit, conglomerate)
     if seam.is_empty:
         return deposit, conglomerate
     splinters = seam.geoms if seam.geom_type == "MultiPolygon" else [seam]
@@ -174,6 +184,108 @@ def footprint(shape, points, what):
     return shapely.contains_xy(shape, points[:, 0], points[:, 1])
 
 
+def reached(middles, start, pool, reach):
+    """Which of the pool's cells the start touches, stepping one cell at a
+    time: the pool is walked outwards from the start until nothing more joins.
+
+    `reach` is a cell's own diagonal in plan, so a step goes to a neighbour
+    and no further: a body of pool cells cut off from the start by cells that
+    are not in the pool stays out, which is the point of walking at all."""
+    tree = cKDTree(middles[pool])
+    taken = np.zeros(len(pool), dtype=bool)
+    front, rounds = middles[start], 0
+    while len(front):
+        near = np.unique(np.concatenate(tree.query_ball_point(front, reach))).astype(int)
+        fresh = near[~taken[near]]
+        if not len(fresh):
+            break
+        taken[fresh] = True
+        front, rounds = middles[pool[fresh]], rounds + 1
+    print(
+        f"    {int(taken.sum()):,} of {len(pool):,} of them joined it, in {rounds} round(s) "
+        f"of {reach:.1f} m",
+        flush=True,
+    )
+    return taken
+
+
+def back_deposit(case, points, hexes, middles, tags, conglomerate, in_conglomerate):
+    """The deposit behind the conglomerate laid over the tags, BACK_DEPTH deep.
+
+    It is a skin, not a body: a hex takes BACK_TAG when its centre stands
+    within BACK_DEPTH of the terrain over it and inside the drawn outline,
+    which is why the terrain comes in here and nowhere else in this file.
+
+    BACK_DEPTH is what is wanted, one hex is what is left when the hexes are
+    taller than that -- a mesh cannot carry a layer thinner than a cell. So the
+    reach is BACK_DEPTH or the hex's own height, whichever is more: where the
+    hexes are the coarse ones the layer is the top hex of the column alone and
+    nothing under it, and where they are finer than BACK_DEPTH the same rule
+    comes down to the 5 m asked for, with no number to change here. Rialba's
+    case refines that ground to 4.8 m at 2.5M cells, so it does; left coarse
+    the hexes there would be 37 m. The log says how thick it came out.
+
+    It takes the rock and the layer between the planes, blue and light blue,
+    but never the conglomerate's own top: where the outline runs over the
+    conglomerate -- the wedge whose ground still lies under the upper plane --
+    a hex already labelled CONGLOMERATE_TAG keeps that label.
+
+    Cutting the outline on the ground and the hexes on their centres leaves a
+    strip between the two, hexes whose centre is under the upper plane though
+    the ground over them is not: they stand between the new region and the
+    conglomerate's top and go to the new region, which is what the walk from
+    it through the skin picks up."""
+    back = outline_of(case.back_deposit, "back deposit")
+    if back is None:
+        return tags
+    if conglomerate is not None:
+        seam = seam_between(back, conglomerate)
+        if seam.area > 1.0:  # under a square metre is the shared boundary's own dust
+            print(f"    they leave {seam.area:.1f} m2 of splinters between them, "
+                  f"which go to the back deposit too", flush=True)
+            back = unary_union([back, seam])
+
+    ground = load_dtm_interpolator(case.points)(middles[:, :2])
+    corners_z = points[:, 2][hexes]  # (n, 8), not the whole (n, 8, 3): this runs on 2.5M hexes
+    heights = corners_z.max(axis=1) - corners_z.min(axis=1)
+    skin = ground - middles[:, 2] < np.maximum(BACK_DEPTH, heights)
+    in_back = footprint(back, middles[:, :2], "back deposit")
+    take = skin & in_back & (tags != CONGLOMERATE_TAG)
+    print(
+        f"  the back deposit: {int(in_back.sum()):,} hexes under its outline, "
+        f"{int(take.sum()):,} of them in the top {BACK_DEPTH:g} m of the terrain, or in "
+        f"the top hex where a hex is taller than that, and not the conglomerate's own top "
+        f"({int((skin & in_back & (tags == CONGLOMERATE_TAG)).sum()):,} left to it)",
+        flush=True,
+    )
+
+    gap = skin & (in_back | in_conglomerate) & (tags != CONGLOMERATE_TAG) & ~take
+    if gap.any() and take.any():
+        # a step is as long as the widest cell in play, not the widest in the
+        # mesh: the walk must reach a neighbour here and stop there
+        corners = points[hexes[take | gap]]
+        sides = corners.max(axis=1) - corners.min(axis=1)
+        reach = 1.01 * np.hypot(sides[:, 0], sides[:, 1]).max()
+        pool = np.where(gap)[0]
+        print(f"    {len(pool):,} hexes of the skin lie between it and the conglomerate's top:",
+              flush=True)
+        take[pool[reached(middles, np.where(take)[0], pool, reach)]] = True
+
+    if take.any():
+        thick = heights[take]
+        print(
+            f"    the layer comes out {np.median(thick):.1f} m thick at the median, "
+            f"{thick.min():.1f} to {thick.max():.1f}, against the {BACK_DEPTH:g} m asked for",
+            flush=True,
+        )
+    for tag in (ROCK_TAG, BETWEEN_TAG, DEPOSIT_TAG):
+        n = int((take & (tags == tag)).sum())
+        if n:
+            print(f"    taken off tag {tag}: {n:,} hexes", flush=True)
+    tags[take] = BACK_TAG
+    return tags
+
+
 def materials(case, points, hexes):
     """Each hex labelled by where it falls against the two planes and the two
     outlines the case carries.
@@ -187,6 +299,10 @@ Both bodies stand on the upper plane: the conglomerate takes
     the two -- it runs on under the conglomerate as it does under the deposit.
     Anywhere else, and under the lower plane, the rock is ROCK_TAG. An outline
     the case leaves out is taken as covering everything.
+
+    Last comes the deposit behind the conglomerate, BACK_TAG, which is not a
+    body between the planes but a skin BACK_DEPTH deep under the terrain, laid
+    over whatever the rules above left there -- see back_deposit().
 
     A hex goes by its centre, so the planes and the outlines cut along cell
     faces -- they are not conformed to, which at a metre of cell is a metre of
@@ -219,11 +335,15 @@ Both bodies stand on the upper plane: the conglomerate takes
     tags[(in_deposit | in_conglomerate) & ~over & (middles[:, 2] >= lower)] = BETWEEN_TAG
     tags[in_deposit & over] = DEPOSIT_TAG
     tags[in_conglomerate & over] = CONGLOMERATE_TAG
+    tags = back_deposit(
+        case, points, hexes, middles, tags, conglomerate, in_conglomerate
+    )
     for tag, label in [
         (ROCK_TAG, "outside both outlines, or under the lower plane"),
         (BETWEEN_TAG, "between the two planes, under either body"),
         (CONGLOMERATE_TAG, "the conglomerate, over the upper plane"),
         (DEPOSIT_TAG, "the deposit, over the upper plane"),
+        (BACK_TAG, f"behind the conglomerate, {BACK_DEPTH:g} m of ground or one hex"),
     ]:
         print(f"  tag {tag} ({label}): {int((tags == tag).sum()):,} hexes", flush=True)
     return tags

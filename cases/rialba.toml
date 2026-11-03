@@ -4,8 +4,11 @@ name = "rialba"                  # also names the SPEED mesh: speed/rialba.mesh
 # the conglomerate's outline, X Y Z in UTM32N with the z unused: the rock over
 # the upper surveyed plane and inside it is labelled apart in the SPEED mesh
 conglomerate = "../data/regions/Rialba Conglomerate.csv"
-# the deposit's outline, same format: the two planes hold only inside it
-deposit = "../data/regions/deposito.txt"
+# the deposit's outline, same format: the two planes hold only inside it. It is
+# the surveyed one carried south onto the SS36 along the stretch that faces it
+deposit = "../data/regions/deposito_esteso.txt"
+# behind the conglomerate: a deposit only at the top, planes.BACK_DEPTH deep
+back_deposit = "../data/regions/deposito_dietro.txt"
 output = "../output/rialba"
 
 [dtm]
@@ -26,12 +29,21 @@ z_padding = 50.0                 # domain below the lowest and above the highest
 # reentrant corner with a run of only one cell past it has no transition
 # template, and the build refuses it.
 inner_regions = [
-    # one rectangle over the towers, the fracture (x [-192,-123], y [227,267])
-    # and the box around the source points (x [-315,-215], y [-110,-10]), so
-    # the fine mesh runs unbroken between them and its outline has no reentrant
-    # corner at all. It has to hold that box with room to spare: a level-3 call
-    # must nest in one level-2 region, footprint and all
-    [-400.0,  20.0, -200.0, 440.0],
+    # one rectangle over the towers, the fracture (x [-192,-123], y [227,267]),
+    # the box around the source points (x [-315,-215], y [-110,-10]) and, to
+    # the north, the deposit behind the conglomerate (x [-322,63], y
+    # [430,810]), so the fine mesh runs unbroken between them and its outline
+    # has no reentrant corner at all. It has to hold that box with room to
+    # spare: a level-3 call must nest in one level-2 region, footprint and all.
+    #
+    # One rectangle and not two: two of them stand closer than 3 cells, so the
+    # build merges them, and the L their union makes has reentrant notches one
+    # cell deep -- no transition template, and it refuses. The width costs the
+    # whole grid some resolution: at 2.5M cells the coarse hex goes from 37 to
+    # 43 m and the refined ones in here, which a region refines twice over, from
+    # 4.1 to 4.8. 4M cells buy today's 37 m back. Either way the hexes under the
+    # back deposit come out under the 5 m its layer is asked to be.
+    [-400.0,  63.0, -200.0, 810.0],
 ]
 source_points = "../data/source_pts/rialba_source_pts.txt"  # refine around them as well
 region_z_padding = 20.0          # clearance above and below the terrain inside each
