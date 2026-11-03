@@ -24,6 +24,8 @@ poisson = ["open3d-cpu"]
 las = ["laspy", "vtk"]
 # python -m dtm_voxelization.orthophoto
 ortho = ["rasterio", "pillow"]
+# python -m dtm_voxelization.deposit_regions: the SS36's kmz is in degrees
+regions = ["rasterio", "matplotlib"]
 
 [project.urls]
 Repository = "https://github.com/compgeo-mox/dtm_voxelization"
