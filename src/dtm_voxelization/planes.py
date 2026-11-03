@@ -35,7 +35,10 @@ BACK_TAG = 5  # the deposit behind the conglomerate: a skin, and only at the top
 BACK_DEPTH = 5.0  # m of ground the back deposit takes, measured down from the terrain,
 # or one hex where the hexes are taller than that -- see back_deposit()
 
-DROPS = (0.0, 60.0)  # the planes to draw, below the one the fit leaves
+# the two planes, below the one the fit leaves: the upper one 5 m under it, by
+# hand and after looking at the grid, the lower one where it always was. They
+# stand 55 m apart now, not 60
+DROPS = (5.0, 60.0)
 UNDER = 10.0  # m the first plane is wanted under the slope that runs parallel to it
 PARALLEL = 12.0  # degrees within which the ground counts as parallel to the plane
 NEIGHBOURS = 10  # ground points a local normal is taken from
