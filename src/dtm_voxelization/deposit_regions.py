@@ -33,14 +33,10 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import meshio
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import split, substring, unary_union
+from shapely.ops import linemerge, split, substring, unary_union
 
 if __package__:
     from . import planes
@@ -72,6 +68,14 @@ EAST = np.array([
     [15.9, 775.0], [15.4, 785.0], [15.4, 795.0], [13.9, 805.0], [13.2, 815.0],
 ])
 YMAX = 810.0  # past the grid's own 805.4, so the footprint covers the last row
+# marching squares: which edges of a cell the zero level joins, by the corners
+# that are negative. 0 is the edge between corner 0 (x, y) and corner 1
+# (x + h, y), then round the cell. The two saddles, 5 and 10, are cut the way
+# that keeps the two negative corners apart, which here only ever happens
+# where the ground grazes the plane and either reading is the same curve.
+JOINS = {1: ((3, 0),), 2: ((0, 1),), 3: ((3, 1),), 4: ((1, 2),), 5: ((3, 0), (1, 2)),
+         6: ((0, 2),), 7: ((3, 2),), 8: ((2, 3),), 9: ((2, 0),), 10: ((0, 1), (2, 3)),
+         11: ((2, 1),), 12: ((1, 3),), 13: ((1, 0),), 14: ((0, 3),)}
 DRAPE = 2.0  # m over the terrain the curves for ParaView are drawn
 STEP = 5.0  # m between their points, so the drape follows the ground
 
@@ -136,6 +140,32 @@ def extended(path, line):
     return grown
 
 
+def zero_level(X, Y, F):
+    """The curve F = 0, as line strings: marching squares over the samples,
+    each crossing read off its own edge by linear interpolation, and the
+    segments joined by shapely. The same curve a contour plot draws, with no
+    plotting library behind it."""
+    corners = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    segments = []
+    for i in range(X.shape[0] - 1):
+        for j in range(X.shape[1] - 1):
+            f = [F[i + dx, j + dy] for dx, dy in corners]
+            index = sum(1 << k for k, v in enumerate(f) if v < 0)
+            if index not in JOINS:
+                continue
+            on = {}
+            for edge in range(4):
+                a, b = edge, (edge + 1) % 4
+                if (f[a] < 0) != (f[b] < 0):
+                    t = f[a] / (f[a] - f[b])
+                    ax, ay = X[i + corners[a][0], j + corners[a][1]], Y[i + corners[a][0], j + corners[a][1]]
+                    bx, by = X[i + corners[b][0], j + corners[b][1]], Y[i + corners[b][0], j + corners[b][1]]
+                    on[edge] = (ax + t * (bx - ax), ay + t * (by - ay))
+            segments += [(on[a], on[b]) for a, b in JOINS[index]]
+    merged = linemerge(segments)
+    return list(merged.geoms) if merged.geom_type == "MultiLineString" else [merged]
+
+
 def wedge(con, terrain, sink, step=2.0):
     """The ground inside the conglomerate that still lies under the upper
     plane: the conglomerate cut along that plane's outcrop, north piece."""
@@ -144,7 +174,7 @@ def wedge(con, terrain, sink, step=2.0):
                        np.arange(y0 - step, y1 + step, step), indexing="ij")
     xy = np.column_stack([X.ravel(), Y.ravel()])
     over = (terrain(xy) - planes.surveyed(xy, sink + planes.DROPS[0])).reshape(X.shape)
-    branches = plt.contour(X, Y, over, levels=[0.0]).allsegs[0]
+    branches = [np.array(line.coords) for line in zero_level(X, Y, over)]
     outcrop = max(branches, key=len)
     print(f"  the upper plane outcrops there in {len(branches)} branch(es), the longest of "
           f"{len(outcrop)} points, x [{outcrop[:, 0].min():.0f},{outcrop[:, 0].max():.0f}] "

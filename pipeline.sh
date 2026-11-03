@@ -8,6 +8,7 @@
 # repository, which is where the container starts. The steps are
 #
 #   area CASE                      the wall's surface, cut to the window
+#   deposit_regions CASE           the two deposit outlines, from what they are drawn on
 #   dtm-voxelization CASE          grid, surfaces, cut, detach, speed
 #   source_points CASE             the surveyed sources, dropped on the grid
 #   source_mesh CASE               the box around them, cut out of the grid
@@ -20,7 +21,9 @@
 #
 # The first runs only when the case draws its surface from an `stl` that is
 # not there yet -- on a fresh clone of a wall case, where the reconstruction has
-# never been made -- and the last three only when the case has what they need:
+# never been made -- the second only when the case carries a back deposit,
+# whose outlines it writes back into data/regions/ before anything reads them,
+# and the last three only when the case has what they need:
 # surveyed sources for two of them, fracture surfaces for the section. So a
 # case like San Martino, a bare wall, goes through the same one command and
 # comes out with the same archive.
@@ -53,17 +56,25 @@ step() {
 
 # what the case holds, and so which steps have anything to do: the output
 # folder, whether there are source points, whether there are surfaces
-read -r output sources surfaces wall from_file <<< "$(python -c "import sys
+read -r output sources surfaces wall from_file regions <<< "$(python -c "import sys
 from dtm_voxelization.case import load_case
 case = load_case(sys.argv[1])
 print(case.output, case.source_points is not None, bool(case.surfaces),
-      case.stl or '-', case.stl is not None)" "${case_file}")"
+      case.stl or '-', case.stl is not None, case.back_deposit is not None)" "${case_file}")"
 echo "output:   ${output}"
 echo "source points: ${sources}, surfaces: ${surfaces}, surface from a file: ${from_file}"
+echo "deposit outlines to draw: ${regions}"
 echo
 
 if [ "${from_file}" = "True" ] && [ ! -f "${wall}" ]; then
     step "surface" python -m dtm_voxelization.area "${case_file}"
+fi
+
+if [ "${regions}" = "True" ]; then
+    step "regions" python -m dtm_voxelization.deposit_regions "${case_file}"
+else
+    echo "=== regions: the case carries no back deposit, skipped"
+    echo
 fi
 
 step "pipeline" dtm-voxelization "${case_file}"
