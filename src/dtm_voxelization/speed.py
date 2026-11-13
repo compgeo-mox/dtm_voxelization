@@ -127,6 +127,11 @@ def run(case):
         f"  detached grid {case.detached_path}: {len(hexes):,} hexes, {len(points):,} points",
         flush=True,
     )
+    # grid.vtu keeps every point of the refined box, carved cells included:
+    # SPEED would carry the unused ones along, so they are dropped here
+    used, renumbered = np.unique(hexes, return_inverse=True)
+    print(f"  dropped {len(points) - len(used):,} points no hex uses, {len(used):,} left", flush=True)
+    points, hexes = points[used], renumbered.reshape(-1, 8)
 
     inverted = count_inverted_hexes(points, hexes)
     print(f"  hexes with a non-positive corner Jacobian: {inverted}", flush=True)

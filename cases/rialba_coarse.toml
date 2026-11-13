@@ -1,0 +1,91 @@
+# Rialba. Relative paths are resolved against this file's folder.
+
+# A coarse copy of rialba.toml, 0.5M cells instead of 3M, for runs that are
+# quick to set up and to iterate on: everything but the size is the same.
+
+name = "rialba_coarse"           # also names the SPEED mesh: speed/rialba_coarse.mesh
+# the conglomerate's outline, X Y Z in UTM32N with the z unused: the rock over
+# the upper surveyed plane and inside it is labelled apart in the SPEED mesh
+conglomerate = "../data/regions/Rialba Conglomerate.csv"
+# the deposit's outline, same format: the two planes hold only inside it. It is
+# the surveyed one carried south onto the SS36 along the stretch that faces it
+deposit = "../data/regions/deposito_esteso.txt"
+# behind the conglomerate: a deposit only at the top, planes.BACK_DEPTH deep
+back_deposit = "../data/regions/deposito_dietro.txt"
+output = "../output/rialba_coarse"
+
+[dtm]
+points = "../data/xyz/merged.xyz"   # point cloud, X Y Z columns, 2-line header
+surface = "height_field"            # the terrain is z = f(x, y): linear interpolation of the points
+trim_to_footprint = false           # the points cover the whole rectangle
+
+[grid]
+# carved cells to aim for (accepted within +-30%). From the 3M of rialba.toml
+# the edges scale by 6^(1/3) = 1.82: about 85 m coarse, 28.5 in the outer
+# region, 9.5 in the inner one and 3.2 around the surfaces. The back deposit
+# comes out one hex thick, 9.5 m, not the 5 m of planes.BACK_DEPTH
+target_cells = 500_000
+z_padding = 50.0                 # domain below the lowest and above the highest DTM point
+# level-2 rectangles [xmin, xmax, ymin, ymax]. Each takes its own z range from
+# the terrain over its own rectangle. Rectangles may INTERSECT: ones closer
+# than 3 level-1-child cells (one coarse cell, i.e. `cell_edge` metres, which
+# the run picks to meet target_cells) are merged into a single refinement call
+# over the union of their footprints, as deep as the deepest of them -- the log
+# says when it happens. Ones further apart than that keep their own depth.
+# Where the union's outline steps, it must step by at least 2 cells: a
+# reentrant corner with a run of only one cell past it has no transition
+# template, and the build refuses it.
+inner_regions = [
+    # one rectangle over the towers, the fracture (x [-192,-123], y [227,267]),
+    # the box around the source points (x [-315,-215], y [-110,-10]) and, to
+    # the north, the deposit behind the conglomerate (x [-322,63], y
+    # [430,810]), so the fine mesh runs unbroken between them and its outline
+    # has no reentrant corner at all. It has to hold that box with room to
+    # spare: a level-3 call must nest in one level-2 region, footprint and all.
+    #
+    # One rectangle and not two: two of them stand closer than 3 cells, so the
+    # build merges them, and the L their union makes has reentrant notches one
+    # cell deep -- no transition template, and it refuses. The width costs the
+    # whole grid some resolution: at 2.5M cells the coarse hex goes from 37 to
+    # 43 m and the refined ones in here, which a region refines twice over, from
+    # 4.1 to 4.8. 4M cells buy today's 37 m back. Either way the hexes under the
+    # back deposit come out under the 5 m its layer is asked to be.
+    [-400.0,  63.0, -200.0, 810.0],
+]
+source_points = "../data/source_pts/rialba_source_pts.txt"  # refine around them as well
+region_z_padding = 20.0          # clearance above and below the terrain inside each
+outer_scale = 1.5                # level-1 region: the inner one scaled in x, y and z,
+                                 # never less than 1.5 coarse cells wider in x and y
+validate_mesh = false           # exhaustive conformity checks, slow on large grids
+
+# merged.xyz is the UTM32N DTM minus its mean (527837.392605, 5082191.470488,
+# 474.976610), z included: the STL's x/y already carry that shift, its z does not
+# the surveyed fractures, built from data/surfaces/polylines by
+# `python -m dtm_voxelization.fracture_surface`. They are already in the DTM's
+# frame, so no translation. The old frattura_verticale_shifted.stl, a rough
+# plane 11.5 m from the surveyed torrione1-2, is left out: it was its stand-in.
+[[surfaces]]
+name = "torrione1-2"
+stl = "../data/surfaces/polylines/Polyline_torrione1-2.stl"
+refine_around = true
+
+[[surfaces]]
+name = "torrione2-3"
+stl = "../data/surfaces/polylines/Polyline_torrione2-3.stl"
+refine_around = true
+
+[[surfaces]]
+name = "torrione3-4"
+stl = "../data/surfaces/polylines/Polyline_torrione3-4.stl"
+refine_around = true
+
+[[surfaces]]
+name = "torrione4-5"
+stl = "../data/surfaces/polylines/Polyline_torrione4-5.stl"
+refine_around = true
+
+[[surfaces]]
+name = "cavita_torrione1"
+stl = "../data/surfaces/polylines/Polyline_contorno_cavità_torrione1.stl"
+remove_detached = true           # the rock this one cuts loose is the cavity itself
+refine_around = true             # and it is far smaller than the cells around it
