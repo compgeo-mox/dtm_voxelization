@@ -23,6 +23,9 @@ Writes, in the case's output folder,
   lake_water.png            a tile of water, in the lake's mean colour in the photo
   lake_normal.png           the same tile's waves as a normal map
 
+The photos' colour is graded once laid: the national one has the blue cast
+of aerial haze (COLOUR_GAIN, CONTRAST, BRIGHTNESS).
+
 The DTM carries the lake's bathymetry, so the photo of the water lies on the
 lake's bed; the lake's surface goes over it, wherever the terrain dips under
 LAKE_LEVEL, and meets the shore where the terrain crosses the level, so it
@@ -70,6 +73,9 @@ MAX_TEXTURE = 16384  # pixels a side
 # m above the sea, Lake Como's mean level: where the DTM's shore points stop
 # and its bathymetry starts (197.x below, 199 and up above)
 LAKE_LEVEL = 198.0
+# the 2012 national photo has the blue cast of aerial haze: a gain per channel,
+# then a contrast stretch about the mean, brightened, takes it back to a forest
+COLOUR_GAIN, CONTRAST, BRIGHTNESS = (1.12, 1.0, 0.80), 1.15, 1.1
 WAVE_TILE = 25.0  # m of lake one tile of waves covers
 WAVE_PIXELS = 1024  # a tile's side, in pixels
 WATER_GAIN = 1.5  # the photo's water, seen straight down, is darker than from a slant
@@ -215,6 +221,13 @@ def main(argv=None):
         covered |= paint(texture, photo, transform)
     print(f"  {100 * (1 - covered.mean()):.1f} per cent of the texture with no photo (black)",
           flush=True)
+    before = texture.reshape(-1, 3).mean(axis=0)
+    graded = texture * np.array(COLOUR_GAIN)
+    mean = graded.reshape(-1, 3).mean(axis=0)
+    texture = np.clip((graded - mean) * CONTRAST + mean * BRIGHTNESS, 0, 255).astype(np.uint8)
+    print(f"  colour: gains {COLOUR_GAIN}, contrast {CONTRAST:g}, brightness {BRIGHTNESS:g}: "
+          f"mean rgb {before.round(1).tolist()} -> "
+          f"{texture.reshape(-1, 3).mean(axis=0).round(1).tolist()}", flush=True)
 
     case.output.mkdir(parents=True, exist_ok=True)
     png = case.output / f"orthophoto_{pixel:g}m.png"
