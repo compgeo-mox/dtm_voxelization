@@ -18,11 +18,25 @@ Writes, in the case's output folder,
 
   orthophoto_<PIXEL>m.png   the texture, north up
   orthophoto_<PIXEL>m.vtp   the terrain with its texture coordinates
+  lake_<PIXEL>m.vtp         the lake's surface, flat at LAKE_LEVEL, its
+                            texture coordinates in tiles of WAVE_TILE metres
+  lake_water.png            a tile of water, in the lake's mean colour in the photo
+  lake_normal.png           the same tile's waves as a normal map
 
-In ParaView: open the .vtp, Coloring Solid Color (white), and under
-Properties > Texture load the .png.
+The DTM carries the lake's bathymetry, so the photo of the water lies on the
+lake's bed; the lake's surface goes over it, wherever the terrain dips under
+LAKE_LEVEL, and meets the shore where the terrain crosses the level, so it
+needs no outline of its own. Its waves are a height field of filtered noise,
+periodic over the tile, turned into a tangent-space normal map; the surface
+carries the normals and tangents a normal map needs.
 
-With no arguments it takes CASE and the PCN mosaic alone at its own PIXEL, so the file runs from an editor as it does from the shell. The
+In ParaView: open the terrain's .vtp, Coloring Solid Color (white), and under
+Properties > Texture load orthophoto_<PIXEL>m.png. Open the lake's .vtp,
+Coloring Solid Color, Interpolation PBR, Texture lake_water.png, Normal
+Texture lake_normal.png, Roughness about 0.1 and Opacity about 0.9.
+
+With no arguments it takes CASE and the PCN mosaic alone at its own PIXEL,
+so the file runs from an editor as it does from the shell. The
 photo's own georeferencing is used, not a .tfw beside it: at Rialba the
 drone's disagrees by 38 m in x.
 """
@@ -53,6 +67,12 @@ else:  # run as a plain file, from an editor's Run button: no package around it
 
 MESH_STEP = 2.0  # m between the terrain mesh's vertices
 MAX_TEXTURE = 16384  # pixels a side
+# m above the sea, Lake Como's mean level: where the DTM's shore points stop
+# and its bathymetry starts (197.x below, 199 and up above)
+LAKE_LEVEL = 198.0
+WAVE_TILE = 25.0  # m of lake one tile of waves covers
+WAVE_PIXELS = 1024  # a tile's side, in pixels
+WATER_GAIN = 1.5  # the photo's water, seen straight down, is darker than from a slant
 # what to work on when no argument is given, as from an editor's Run button;
 # both photos are resolved against the repository
 CASE = "cases/rialba.toml"
@@ -118,8 +138,31 @@ def terrain_mesh(terrain, west, north, width, height, pixel):
     return points, grid_triangles(len(east), len(northing)), uv
 
 
-def write_vtp(path, points, triangles, uv):
-    """The surface as VTK PolyData, uv as its active texture coordinates."""
+def waves(colour, seed=0):
+    """(water, normal) images of one periodic tile of waves: water in the given
+    colour, a shade lighter on the crests, and their tangent-space normals."""
+    rng = np.random.default_rng(seed)
+    k = np.fft.fftfreq(WAVE_PIXELS) * WAVE_PIXELS  # cycles per tile
+    kx, ky = np.meshgrid(k, k, indexing="xy")
+    radius = np.hypot(kx, ky)
+    # most of the energy at 8 to 30 waves a tile, i.e. ripples of 1 to 3 m,
+    # stretched along x as a breeze would
+    spectrum = np.exp(-((radius - 15) / 8) ** 2) * (1 + 0.6 * (np.abs(kx) > np.abs(ky)))
+    height = np.real(np.fft.ifft2(spectrum * np.exp(2j * np.pi * rng.random(radius.shape))))
+    height /= np.abs(height).max()
+    slope = 6.0  # how steep the ripples look
+    dx = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) * slope / 2
+    dy = (np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)) * slope / 2
+    normal = np.dstack([-dx, dy, np.ones_like(height)])  # image rows run south: dy flips
+    normal /= np.linalg.norm(normal, axis=2, keepdims=True)
+    shade = 1 + 0.12 * height[..., None]
+    water = np.clip(np.asarray(colour, float) * shade, 0, 255).astype(np.uint8)
+    return water, ((normal * 0.5 + 0.5) * 255).astype(np.uint8)
+
+
+def write_vtp(path, points, triangles, uv, up=False):
+    """The surface as VTK PolyData, uv as its active texture coordinates; with
+    up, a flat surface, also +z normals and +x tangents, for a normal map."""
     import vtk
     from vtk.util.numpy_support import numpy_to_vtk, numpy_to_vtkIdTypeArray
 
@@ -134,6 +177,13 @@ def write_vtp(path, points, triangles, uv):
     tcoords = numpy_to_vtk(np.ascontiguousarray(uv, dtype=np.float32), deep=True)
     tcoords.SetName("uv")
     surface.GetPointData().SetTCoords(tcoords)
+    if up:
+        normals = numpy_to_vtk(np.tile(np.float32([0, 0, 1]), (len(points), 1)), deep=True)
+        normals.SetName("Normals")
+        surface.GetPointData().SetNormals(normals)
+        tangents = numpy_to_vtk(np.tile(np.float32([1, 0, 0]), (len(points), 1)), deep=True)
+        tangents.SetName("Tangents")
+        surface.GetPointData().SetTangents(tangents)
     writer = vtk.vtkXMLPolyDataWriter()
     writer.SetFileName(str(path))
     writer.SetInputData(surface)
@@ -180,6 +230,32 @@ def main(argv=None):
     print(f"wrote {vtp}: {len(points):,} points, {len(triangles):,} triangles, "
           f"{vtp.stat().st_size / 1024**2:.1f} MB", flush=True)
 
+    level = LAKE_LEVEL - M[2]  # in the DTM's frame
+    wet = (points[triangles, 2] < level).any(axis=1)
+    print(f"  lake at {LAKE_LEVEL:g} m a.s.l. (z {level:.2f}): {int(wet.sum()):,} of "
+          f"{len(triangles):,} triangles have a corner under it", flush=True)
+    if wet.any():
+        used, compact = np.unique(triangles[wet], return_inverse=True)
+        water = points[used].copy()
+        water[:, 2] = level
+        # the photo's colour of the water: its texture where the lake is deep,
+        # away from the shore's rocks and road
+        deep = points[used, 2] < level - 5
+        cols = np.clip((uv[used][deep, 0] * width).astype(int), 0, width - 1)
+        rows = np.clip(((1 - uv[used][deep, 1]) * height).astype(int), 0, height - 1)
+        colour = np.clip(WATER_GAIN * np.median(texture[rows, cols], axis=0), 0, 255)
+        print(f"  water colour {colour.astype(int).tolist()}, {WATER_GAIN:g} times the "
+              f"photo's median over {int(deep.sum()):,} points of deep water", flush=True)
+        tile, normal = waves(colour)
+        for name, image in (("lake_water.png", tile), ("lake_normal.png", normal)):
+            Image.fromarray(image).save(case.output / name)
+            print(f"wrote {case.output / name}: {WAVE_PIXELS} pixels for {WAVE_TILE:g} m",
+                  flush=True)
+        lake = case.output / f"lake_{pixel:g}m.vtp"
+        write_vtp(lake, water, compact.reshape(-1, 3), water[:, :2] / WAVE_TILE, up=True)
+        print(f"wrote {lake}: {len(water):,} points, "
+              f"{(np.ptp(water[:, 0]) * np.ptp(water[:, 1])) / 1e6:.2f} km2 bounding box",
+              flush=True)
 
 if __name__ == "__main__":
     main()

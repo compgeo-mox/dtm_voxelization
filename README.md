@@ -88,8 +88,10 @@ from the Geoportale Nazionale's WMS (no access constraints stated; credit
 over the other at the given pixel size, each later one over the earlier
 wherever it has a picture, and writes `orthophoto_<pixel>m.png`, the texture,
 and `orthophoto_<pixel>m.vtp`, the terrain every 2 m with its texture
-coordinates. In ParaView open the `.vtp`, set Coloring to Solid Color and
-load the `.png` under Properties > Texture. A texture is at most 16384 pixels
+coordinates, and `lake_<pixel>m.vtp`, the lake's surface flat at 198 m a.s.l.
+over the DTM's bathymetry, with the same texture. In ParaView open the `.vtp`
+files, set Coloring to Solid Color and load the `.png` under Properties >
+Texture; the lake looks best with some Specular and an Opacity just under 1. A texture is at most 16384 pixels
 a side, which at Rialba means at least 0.11 m per pixel.
 
 `python -m dtm_voxelization.railway cases/rialba.toml` writes the railway
