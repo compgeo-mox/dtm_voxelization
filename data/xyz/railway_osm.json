@@ -1,0 +1,451 @@
+{
+ "version": 0.6,
+ "generator": "Overpass API 0.7.62.11 87bfad18",
+ "osm3s": {
+  "timestamp_osm_base": "2026-11-17T19:48:02Z",
+  "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+ },
+ "elements": [
+  {
+   "type": "way",
+   "id": 90237911,
+   "bounds": {
+    "minlat": 45.8916991,
+    "minlon": 9.3548583,
+    "maxlat": 45.8921264,
+    "maxlon": 9.3553856
+   },
+   "geometry": [
+    {
+     "lat": 45.8916991,
+     "lon": 9.3553856
+    },
+    {
+     "lat": 45.8921264,
+     "lon": 9.3548583
+    }
+   ],
+   "tags": {
+    "covered": "yes",
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "layer": "-1",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "tunnel": "avalanche_protector",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237912,
+   "bounds": {
+    "minlat": 45.8869874,
+    "minlon": 9.3574553,
+    "maxlat": 45.8905675,
+    "maxlon": 9.3599939
+   },
+   "geometry": [
+    {
+     "lat": 45.8869874,
+     "lon": 9.3599939
+    },
+    {
+     "lat": 45.887469,
+     "lon": 9.3596074
+    },
+    {
+     "lat": 45.887872,
+     "lon": 9.3593236
+    },
+    {
+     "lat": 45.8887699,
+     "lon": 9.3589165
+    },
+    {
+     "lat": 45.8893421,
+     "lon": 9.3586338
+    },
+    {
+     "lat": 45.8897056,
+     "lon": 9.3583834
+    },
+    {
+     "lat": 45.8900089,
+     "lon": 9.3581225
+    },
+    {
+     "lat": 45.8905675,
+     "lon": 9.3574553
+    }
+   ],
+   "tags": {
+    "covered": "yes",
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "75",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "source": "CTR al tratto",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237913,
+   "bounds": {
+    "minlat": 45.8830614,
+    "minlon": 9.3605582,
+    "maxlat": 45.8862049,
+    "maxlon": 9.3650967
+   },
+   "geometry": [
+    {
+     "lat": 45.8830614,
+     "lon": 9.3650967
+    },
+    {
+     "lat": 45.8834133,
+     "lon": 9.364391
+    },
+    {
+     "lat": 45.8841299,
+     "lon": 9.3631921
+    },
+    {
+     "lat": 45.8854015,
+     "lon": 9.3614046
+    },
+    {
+     "lat": 45.8862049,
+     "lon": 9.3605582
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "layer": "-1",
+    "maxspeed": "75",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "tunnel": "yes",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237914,
+   "bounds": {
+    "minlat": 45.8921264,
+    "minlon": 9.354169,
+    "maxlat": 45.892695,
+    "maxlon": 9.3548583
+   },
+   "geometry": [
+    {
+     "lat": 45.8921264,
+     "lon": 9.3548583
+    },
+    {
+     "lat": 45.892695,
+     "lon": 9.354169
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237915,
+   "bounds": {
+    "minlat": 45.886526,
+    "minlon": 9.3599939,
+    "maxlat": 45.8869874,
+    "maxlon": 9.3603253
+   },
+   "geometry": [
+    {
+     "lat": 45.886526,
+     "lon": 9.3603253
+    },
+    {
+     "lat": 45.8869874,
+     "lon": 9.3599939
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "layer": "-1",
+    "maxspeed": "75",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "tunnel": "avalanche_protector",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237916,
+   "bounds": {
+    "minlat": 45.8905675,
+    "minlon": 9.3553856,
+    "maxlat": 45.8916991,
+    "maxlon": 9.3574553
+   },
+   "geometry": [
+    {
+     "lat": 45.8905675,
+     "lon": 9.3574553
+    },
+    {
+     "lat": 45.8909619,
+     "lon": 9.3567824
+    },
+    {
+     "lat": 45.8914514,
+     "lon": 9.3558115
+    },
+    {
+     "lat": 45.8916991,
+     "lon": 9.3553856
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90237918,
+   "bounds": {
+    "minlat": 45.8862049,
+    "minlon": 9.3603253,
+    "maxlat": 45.886526,
+    "maxlon": 9.3605582
+   },
+   "geometry": [
+    {
+     "lat": 45.8862049,
+     "lon": 9.3605582
+    },
+    {
+     "lat": 45.8863421,
+     "lon": 9.3604597
+    },
+    {
+     "lat": 45.886526,
+     "lon": 9.3603253
+    }
+   ],
+   "tags": {
+    "covered": "yes",
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "75",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "source": "CTR al tratto",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90255722,
+   "bounds": {
+    "minlat": 45.8945584,
+    "minlon": 9.3480315,
+    "maxlat": 45.8951937,
+    "maxlon": 9.3500414
+   },
+   "geometry": [
+    {
+     "lat": 45.8945584,
+     "lon": 9.3500414
+    },
+    {
+     "lat": 45.8946817,
+     "lon": 9.3494867
+    },
+    {
+     "lat": 45.8947936,
+     "lon": 9.34906
+    },
+    {
+     "lat": 45.8949628,
+     "lon": 9.3485796
+    },
+    {
+     "lat": 45.8951937,
+     "lon": 9.3480315
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90255729,
+   "bounds": {
+    "minlat": 45.8951937,
+    "minlon": 9.3472958,
+    "maxlat": 45.8955736,
+    "maxlon": 9.3480315
+   },
+   "geometry": [
+    {
+     "lat": 45.8951937,
+     "lon": 9.3480315
+    },
+    {
+     "lat": 45.8955736,
+     "lon": 9.3472958
+    }
+   ],
+   "tags": {
+    "covered": "yes",
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "source": "CTR al tratto",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  },
+  {
+   "type": "way",
+   "id": 90255741,
+   "bounds": {
+    "minlat": 45.892695,
+    "minlon": 9.3500414,
+    "maxlat": 45.8945584,
+    "maxlon": 9.354169
+   },
+   "geometry": [
+    {
+     "lat": 45.892695,
+     "lon": 9.354169
+    },
+    {
+     "lat": 45.8932434,
+     "lon": 9.3532163
+    },
+    {
+     "lat": 45.8937571,
+     "lon": 9.3523424
+    },
+    {
+     "lat": 45.8942392,
+     "lon": 9.3511803
+    },
+    {
+     "lat": 45.8944335,
+     "lon": 9.3505765
+    },
+    {
+     "lat": 45.8945584,
+     "lon": 9.3500414
+    }
+   ],
+   "tags": {
+    "electrified": "contact_line",
+    "frequency": "0",
+    "gauge": "1435",
+    "layer": "-1",
+    "maxspeed": "80",
+    "name": "Ferrovia della Valtellina",
+    "operator": "Rete Ferroviaria Italiana",
+    "operator:short": "RFI",
+    "operator:wikidata": "Q1060049",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:scmt": "yes",
+    "tunnel": "yes",
+    "usage": "branch",
+    "voltage": "3000"
+   }
+  }
+ ]
+}

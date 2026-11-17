@@ -75,20 +75,27 @@ mesh diagonal fails the run rather than writing a surface turned inside out.
 las_export runs it on what it writes. None of this touches the `dtm_surface.stl`
 a case builds.
 
-An orthophoto of the same DTM becomes a view of it:
+Orthophotos become a textured view of the DTM:
 
 ```bash
-python -m dtm_voxelization.orthophoto path/to/ortho.tif cases/rialba.toml
+python -m dtm_voxelization.pcn_orthophoto cases/rialba.toml    # output/rialba/pcn2012.tif
+python -m dtm_voxelization.orthophoto cases/rialba.toml 0.5 output/rialba/pcn2012.tif
 ```
 
-writing beside the photo a downsampled `.png` of it and a `.vtu` of the case's
-terrain carrying the photo's colour, one vertex per downsampled pixel
-(`orthophoto.TARGET_PIXELS`, 2M, which at Rialba is 0.6 m per pixel). Open the
-`.vtu`, colour by `rgb` and turn *Map Scalars* off. The colour is the photo's,
-the shape the DTM's, so trees and rock show as colour on a terrain that stays
-as smooth as the cloud it is interpolated from. Pixels the photo marks
-transparent are left as holes. The photo's own georeferencing is used, not a
-`.tfw` beside it.
+`pcn_orthophoto` fetches AGEA's 2012 orthophoto (50 cm) over the whole DTM
+from the Geoportale Nazionale's WMS (no access constraints stated; credit
+"Geoportale Nazionale - Ortofoto AGEA 2012"). `orthophoto` lays the photos one
+over the other at the given pixel size, each later one over the earlier
+wherever it has a picture, and writes `orthophoto_<pixel>m.png`, the texture,
+and `orthophoto_<pixel>m.vtp`, the terrain every 2 m with its texture
+coordinates. In ParaView open the `.vtp`, set Coloring to Solid Color and
+load the `.png` under Properties > Texture. A texture is at most 16384 pixels
+a side, which at Rialba means at least 0.11 m per pixel.
+
+`python -m dtm_voxelization.railway cases/rialba.toml` writes the railway
+through the case (OpenStreetMap, ODbL, cached in `data/xyz/railway_osm.json`)
+as `railway.csv`, `s x y z kind` every 2 m, and `railway.vtu`: kind 0 in the
+open, 1 under an avalanche gallery, 2 in a tunnel.
 
 ## A case
 

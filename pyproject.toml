@@ -23,7 +23,7 @@ poisson = ["open3d-cpu"]
 # python -m dtm_voxelization.las_export
 las = ["laspy", "vtk"]
 # python -m dtm_voxelization.orthophoto
-ortho = ["rasterio", "pillow"]
+ortho = ["rasterio", "pillow", "vtk"]
 # python -m dtm_voxelization.deposit_regions: the SS36's kmz is in degrees
 regions = ["rasterio", "matplotlib"]
 
