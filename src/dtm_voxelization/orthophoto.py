@@ -83,7 +83,7 @@ WATER_GAIN = 1.5  # the photo's water, seen straight down, is darker than from a
 # both photos are resolved against the repository
 CASE = "cases/rialba.toml"
 PIXEL = 0.5
-PHOTOS = ["output/rialba/pcn2012.tif"]  # one photo over the whole mountain
+PHOTOS = ["data/orthophoto/rialba_pcn2012.tif"]  # one photo over the whole mountain
 
 
 def canvas(case, pixel):
@@ -122,6 +122,19 @@ def paint(texture, path, transform):
     covered = seen > 0
     texture[covered] = np.moveaxis(bands, 0, -1)[covered]
     return covered
+
+
+def grade(texture):
+    """The photo's colours taken back from the haze: COLOUR_GAIN per channel,
+    then CONTRAST about the mean, times BRIGHTNESS."""
+    before = texture.reshape(-1, 3).mean(axis=0)
+    graded = texture * np.array(COLOUR_GAIN)
+    mean = graded.reshape(-1, 3).mean(axis=0)
+    texture = np.clip((graded - mean) * CONTRAST + mean * BRIGHTNESS, 0, 255).astype(np.uint8)
+    print(f"  colour: gains {COLOUR_GAIN}, contrast {CONTRAST:g}, brightness {BRIGHTNESS:g}: "
+          f"mean rgb {before.round(1).tolist()} -> "
+          f"{texture.reshape(-1, 3).mean(axis=0).round(1).tolist()}", flush=True)
+    return texture
 
 
 def terrain_mesh(terrain, west, north, width, height, pixel):
@@ -221,13 +234,7 @@ def main(argv=None):
         covered |= paint(texture, photo, transform)
     print(f"  {100 * (1 - covered.mean()):.1f} per cent of the texture with no photo (black)",
           flush=True)
-    before = texture.reshape(-1, 3).mean(axis=0)
-    graded = texture * np.array(COLOUR_GAIN)
-    mean = graded.reshape(-1, 3).mean(axis=0)
-    texture = np.clip((graded - mean) * CONTRAST + mean * BRIGHTNESS, 0, 255).astype(np.uint8)
-    print(f"  colour: gains {COLOUR_GAIN}, contrast {CONTRAST:g}, brightness {BRIGHTNESS:g}: "
-          f"mean rgb {before.round(1).tolist()} -> "
-          f"{texture.reshape(-1, 3).mean(axis=0).round(1).tolist()}", flush=True)
+    texture = grade(texture)
 
     case.output.mkdir(parents=True, exist_ok=True)
     png = case.output / f"orthophoto_{pixel:g}m.png"

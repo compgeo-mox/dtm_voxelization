@@ -10,7 +10,8 @@ the wall alone: orthophoto.py lays the drone's over it.
 
 The WMS serves at most MAX_SIDE pixels a side, so the DTM's rectangle is
 fetched in tiles at PIXEL metres, in UTM 32N directly, and mosaicked into
-output/<case>/pcn2012.tif.
+data/orthophoto/<case>_pcn2012.tif, JPEG-compressed, kept in the repository:
+once there it is not fetched again, so the cluster needs no network for it.
 """
 
 import io
@@ -41,12 +42,12 @@ PIXEL = 0.5  # m, the photo's own resolution
 MAX_SIDE = 2000  # pixels a side per request, under the service's 2048
 
 
-def tile(west, south, width, height):
+def tile(west, south, width, height, pixel=PIXEL):
     """(height, width, 3) of the photo over that rectangle, UTM 32N."""
     query = urllib.parse.urlencode({
         "service": "WMS", "version": "1.3.0", "request": "GetMap", "layers": LAYER,
         "styles": "", "crs": "EPSG:32632", "format": "image/png",
-        "bbox": f"{west},{south},{west + width * PIXEL},{south + height * PIXEL}",
+        "bbox": f"{west},{south},{west + width * pixel},{south + height * pixel}",
         "width": width, "height": height})
     request = urllib.request.Request(f"{WMS}&{query}",
                                      headers={"User-Agent": "dtm_voxelization orthophoto"})
@@ -67,12 +68,30 @@ def tile(west, south, width, height):
     return rgb
 
 
+def write_photo(path, mosaic, west, north, pixel):
+    """An RGB mosaic (row 0 north) as a tiled, JPEG-compressed GeoTIFF, UTM 32N."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    height, width = mosaic.shape[:2]
+    with rasterio.open(path, "w", driver="GTiff", width=width, height=height, count=3,
+                       dtype="uint8", crs="EPSG:32632",
+                       transform=rasterio.transform.from_origin(west, north, pixel, pixel),
+                       compress="jpeg", jpeg_quality=90, photometric="ycbcr",
+                       tiled=True) as out:
+        out.write(np.moveaxis(mosaic, -1, 0))
+    print(f"wrote {path}: {width:,} x {height:,} at {pixel:g} m, "
+          f"{path.stat().st_size / 1024**2:.1f} MB", flush=True)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) > 1:
         raise SystemExit(__doc__)
     root = Path(__file__).resolve().parents[2]
     case = load_case(argv[0] if argv else root / CASE)
+    path = root / "data" / "orthophoto" / f"{case.name}_pcn2012.tif"
+    if path.exists():
+        print(f"{path}: there already, not fetched again", flush=True)
+        return
 
     x, y, _ = _load_xyz(case.points)
     west, south = np.floor(x.min() + M[0]), np.floor(y.min() + M[1])
@@ -93,15 +112,7 @@ def main(argv=None):
     empty = (mosaic.max(axis=2) == 0).mean()
     print(f"  {100 * empty:.1f} per cent of the pixels black (no photo)", flush=True)
 
-    case.output.mkdir(parents=True, exist_ok=True)
-    path = case.output / "pcn2012.tif"
-    transform = rasterio.transform.from_origin(west, south + height * PIXEL, PIXEL, PIXEL)
-    with rasterio.open(path, "w", driver="GTiff", width=width, height=height, count=3,
-                       dtype="uint8", crs="EPSG:32632", transform=transform,
-                       compress="deflate", tiled=True) as out:
-        out.write(np.moveaxis(mosaic, -1, 0))
-    print(f"wrote {path}: {path.stat().st_size / 1024**2:.1f} MB", flush=True)
-
+    write_photo(path, mosaic, west, south + height * PIXEL, PIXEL)
 
 if __name__ == "__main__":
     main()

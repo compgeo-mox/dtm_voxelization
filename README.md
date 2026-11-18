@@ -78,8 +78,8 @@ a case builds.
 Orthophotos become a textured view of the DTM:
 
 ```bash
-python -m dtm_voxelization.pcn_orthophoto cases/rialba.toml    # output/rialba/pcn2012.tif
-python -m dtm_voxelization.orthophoto cases/rialba.toml 0.5 output/rialba/pcn2012.tif
+python -m dtm_voxelization.pcn_orthophoto cases/rialba.toml    # data/orthophoto/rialba_pcn2012.tif
+python -m dtm_voxelization.orthophoto cases/rialba.toml 0.5 data/orthophoto/rialba_pcn2012.tif
 ```
 
 `pcn_orthophoto` fetches AGEA's 2012 orthophoto (50 cm) over the whole DTM
