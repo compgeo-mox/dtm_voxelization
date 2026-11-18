@@ -4,9 +4,8 @@
 
 A square EXTENT metres a side around the DTM's rectangle, with a hole where
 the DTM is: the case's own textured terrain (orthophoto) goes in it. Its
-ground is the Copernicus DEM GLO-30 (ESA, 30 m, open data on AWS, read
-straight from its cloud-optimised GeoTIFFs), a surface model -- trees and
-roofs on it -- which does at that scale. It is sampled every STEP metres on a
+ground is Regione Lombardia's DTM 5x5 (2015, bare ground, from its
+geoportal's ImageServer). It is sampled every STEP metres on a
 grid aligned with the DTM's rectangle, so the hole's edges are grid lines;
 on them the height is the DTM's, and outside it the DEM's, shifted by the
 DTM-minus-DEM of the nearest dry edge point, a shift that fades over BLEND
@@ -20,7 +19,7 @@ The photo is the same national orthophoto as pcn_orthophoto's, fetched over
 the square at PIXEL metres and graded as orthophoto grades it. What is
 fetched is kept in the repository, so it is fetched once:
 data/orthophoto/<case>_backdrop_pcn2012.tif, the photo, and
-data/dem/<case>_backdrop_copernicus.tif, the DEM on the grid. Writes, in the
+data/dem/<case>_backdrop_dtm5.tif, the DEM on the grid. Writes, in the
 case's output folder,
 
   backdrop.png        the texture, north up
@@ -30,20 +29,20 @@ case's output folder,
 
 import sys
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import numpy as np
 import rasterio
 from PIL import Image
-from rasterio.enums import Resampling
-from rasterio.warp import reproject, transform_bounds
 from scipy.spatial import cKDTree
 
 if __package__:
     from .case import load_case
     from .dtm_io import _load_xyz, load_dtm_interpolator
     from .orthophoto import LAKE_LEVEL, MAX_TEXTURE, WAVE_TILE, grade, write_vtp
-    from .pcn_orthophoto import MAX_SIDE, tile, write_photo
+    from .pcn_orthophoto import tile, write_photo
     from .shift_fracture import M
     from .terrain import grid_triangles
 else:  # run as a plain file, from an editor's Run button: no package around it
@@ -51,7 +50,7 @@ else:  # run as a plain file, from an editor's Run button: no package around it
     from dtm_voxelization.case import load_case
     from dtm_voxelization.dtm_io import _load_xyz, load_dtm_interpolator
     from dtm_voxelization.orthophoto import LAKE_LEVEL, MAX_TEXTURE, WAVE_TILE, grade, write_vtp
-    from dtm_voxelization.pcn_orthophoto import MAX_SIDE, tile, write_photo
+    from dtm_voxelization.pcn_orthophoto import tile, write_photo
     from dtm_voxelization.shift_fracture import M
     from dtm_voxelization.terrain import grid_triangles
 
@@ -61,14 +60,13 @@ STEP = 5.0  # m between the backdrop's vertices
 PIXEL = 1.0  # m, the backdrop photo's resolution
 BLEND = 150.0  # m over which the DTM's offset from the DEM fades
 WATER = 2.0  # m over the lake's level under which the DEM is lake
-DEM = ("/vsicurl/https://copernicus-dem-30m.s3.amazonaws.com/"
-       "Copernicus_DSM_COG_10_N{lat:02d}_00_E{lon:03d}_00_DEM/"
-       "Copernicus_DSM_COG_10_N{lat:02d}_00_E{lon:03d}_00_DEM.tif")
+SIDE = 500  # pixels a side per photo request: 2 km ones hit a broken file of the service
+DEM = "https://www.cartografia.servizirl.it/arcgis2/rest/services/BaseMap/DTM5_RL_img/ImageServer"
 
 
 def dem(x, y, cache):
-    """The Copernicus DEM on the grid x (nx,), y (ny,), DTM frame, as (nx, ny),
-    from cache when it is there and on this grid, else fetched into it."""
+    """Regione Lombardia's DTM 5x5 on the grid x (nx,), y (ny,), DTM frame, as
+    (nx, ny), from cache when it is there and on this grid, else fetched into it."""
     west, east, south, north = x[0] + M[0], x[-1] + M[0], y[0] + M[1], y[-1] + M[1]
     transform = rasterio.transform.from_origin(west - STEP / 2, north + STEP / 2, STEP, STEP)
     if cache.exists():
@@ -77,22 +75,25 @@ def dem(x, y, cache):
                 print(f"  DEM from {cache}", flush=True)
                 return kept.read(1)[::-1].T - M[2]
         print(f"  {cache} is on another grid: fetched again", flush=True)
-    lon0, lat0, lon1, lat1 = transform_bounds("EPSG:32632", "EPSG:4326", west, south, east, north)
-    heights = np.full((len(y), len(x)), np.nan, dtype=np.float32)  # rows north to south
-    for lat in range(int(np.floor(lat0)), int(np.floor(lat1)) + 1):
-        for lon in range(int(np.floor(lon0)), int(np.floor(lon1)) + 1):
-            url = DEM.format(lat=lat, lon=lon)
-            t0 = time.perf_counter()
-            part = np.full_like(heights, np.nan)
-            with rasterio.open(url) as source:
-                reproject(rasterio.band(source, 1), part, dst_transform=transform,
-                          dst_crs="EPSG:32632", dst_nodata=np.nan,
-                          resampling=Resampling.bilinear)
-            heights = np.where(np.isnan(heights), part, heights)
-            print(f"  DEM tile N{lat} E{lon:03d}: {100 * np.isfinite(part).mean():.1f} per cent "
-                  f"of the grid, in {time.perf_counter() - t0:.1f}s", flush=True)
-    if np.isnan(heights).any():
-        raise SystemExit(f"{int(np.isnan(heights).sum())} grid points with no DEM")
+    query = urllib.parse.urlencode({
+        "bbox": f"{west - STEP / 2},{south - STEP / 2},{east + STEP / 2},{north + STEP / 2}",
+        "bboxSR": 32632, "imageSR": 32632, "size": f"{len(x)},{len(y)}", "format": "tiff",
+        "pixelType": "F32", "interpolation": "RSP_BilinearInterpolation", "f": "image"})
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(f"{DEM}/exportImage?{query}", timeout=300) as response:
+        body = response.read()
+    with rasterio.MemoryFile(body) as memory, memory.open() as source:
+        heights = source.read(1).astype(np.float32)  # rows north to south
+        if (source.width, source.height) != (len(x), len(y)):
+            raise SystemExit(f"asked {len(x)} x {len(y)} DEM pixels, got {source.width} x {source.height}")
+        if source.nodata is not None:
+            heights[heights == source.nodata] = np.nan
+    print(f"  DEM {len(x):,} x {len(y):,} from {DEM}, {len(body) / 1024**2:.1f} MB in "
+          f"{time.perf_counter() - t0:.1f}s: {np.nanmin(heights):.1f} .. {np.nanmax(heights):.1f} m",
+          flush=True)
+    if np.isnan(heights).any() or np.nanmin(heights) < 100:
+        raise SystemExit(f"{int(np.isnan(heights).sum())} grid points with no DEM, "
+                         f"lowest {np.nanmin(heights):.1f} m")
     cache.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(cache, "w", driver="GTiff", width=len(x), height=len(y), count=1,
                        dtype="float32", crs="EPSG:32632", transform=transform,
@@ -112,12 +113,34 @@ def photo(west, south, width, height, cache):
                 return np.moveaxis(kept.read(), 0, -1)
         print(f"  {cache} is of another size: fetched again", flush=True)
     mosaic = np.zeros((height, width, 3), dtype=np.uint8)
-    for col in range(0, width, MAX_SIDE):
-        for row in range(0, height, MAX_SIDE):
-            w, h = min(MAX_SIDE, width - col), min(MAX_SIDE, height - row)
+    missing = []
+
+    def fetch(col, row, w, h):
+        """A piece, split in four when the service fails on it, down to SIDE/4;
+        left black when it still fails."""
+        try:
             mosaic[height - row - h: height - row, col: col + w] = tile(
                 west + col * PIXEL, south + row * PIXEL, w, h, PIXEL)
+        except (OSError, SystemExit) as error:
+            if max(w, h) <= SIDE // 4:
+                print(f"  PHOTO MISSING at column {col}, row {row} from the south, {w} x {h}: "
+                      f"left black ({error})", flush=True)
+                missing.append(w * h)
+                return
+            print(f"  failed at column {col}, row {row}, {w} x {h}: split in four", flush=True)
+            hw, hh = (w + 1) // 2, (h + 1) // 2
+            for c, r, ww, rh in ((col, row, hw, hh), (col + hw, row, w - hw, hh),
+                                 (col, row + hh, hw, h - hh), (col + hw, row + hh, w - hw, h - hh)):
+                if ww and rh:
+                    fetch(c, r, ww, rh)
+
+    for col in range(0, width, SIDE):
+        for row in range(0, height, SIDE):
+            fetch(col, row, min(SIDE, width - col), min(SIDE, height - row))
         print(f"  photo: column {col} of {width} fetched", flush=True)
+    if missing:
+        print(f"  PHOTO MISSING on {len(missing)} pieces, {100 * sum(missing) / (width * height):.2f} "
+              f"per cent of the square, left black", flush=True)
     write_photo(cache, mosaic, west, south + height * PIXEL, PIXEL)
     return mosaic
 
@@ -141,7 +164,7 @@ def main(argv=None):
           f"({len(x):,} x {len(y):,}), around the DTM's {hi[0] - lo[0]:.1f} x "
           f"{hi[1] - lo[1]:.1f} m", flush=True)
 
-    z = dem(x, y, root / "data" / "dem" / f"{case.name}_backdrop_copernicus.tif")
+    z = dem(x, y, root / "data" / "dem" / f"{case.name}_backdrop_dtm5.tif")
     gx, gy = np.meshgrid(x, y, indexing="ij")  # i * ny + j, as grid_triangles
     tol = 1e-6 * EXTENT
     inside = ((gx >= lo[0] - tol) & (gx <= hi[0] + tol) & (gy >= lo[1] - tol) & (gy <= hi[1] + tol))

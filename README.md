@@ -94,6 +94,17 @@ files, set Coloring to Solid Color and load the `.png` under Properties >
 Texture; the lake looks best with some Specular and an Opacity just under 1. A texture is at most 16384 pixels
 a side, which at Rialba means at least 0.11 m per pixel.
 
+`python -m dtm_voxelization.backdrop cases/rialba.toml` writes the land and
+lake 6 km around the DTM, with a hole where the DTM is: `backdrop.png`,
+`backdrop.vtp`, `backdrop_lake.vtp`. Its ground is Regione Lombardia's DTM 5x5
+(2015, bare ground, from the geoportal's `BaseMap/DTM5_RL_img` ImageServer),
+shifted to meet the DTM along its edge; its photo is the same AGEA 2012 at
+1 m. Both are kept in `data/dem/<case>_backdrop_dtm5.tif` and
+`data/orthophoto/<case>_backdrop_pcn2012.tif`, so they are fetched once. The
+national WMS fails on a few spots (a broken file on its side): the photo is
+fetched in 500 px pieces, split down to 125 px where it fails, and what still
+fails is left black and logged as `PHOTO MISSING`.
+
 `python -m dtm_voxelization.railway cases/rialba.toml` writes the railway
 through the case (OpenStreetMap, ODbL, cached in `data/xyz/railway_osm.json`)
 as `railway.csv`, `s x y z kind` every 2 m, and `railway.vtu`: kind 0 in the
